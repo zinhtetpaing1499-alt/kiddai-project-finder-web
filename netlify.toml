@@ -1,0 +1,59 @@
+[build]
+  base = "."
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Google auth API (used by Connect Google + token refresh)
+[[redirects]]
+  from = "/api/google/client-id"
+  to = "/.netlify/functions/google-auth?action=client-id"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/google/token"
+  to = "/.netlify/functions/google-auth?action=token"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/google/refresh"
+  to = "/.netlify/functions/google-auth?action=refresh"
+  status = 200
+  force = true
+
+# Facebook Messenger webhook + unread notifications (badge only)
+[[redirects]]
+  from = "/api/facebook/webhook"
+  to = "/.netlify/functions/facebook-webhook"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/facebook/notifications"
+  to = "/.netlify/functions/facebook-notifications"
+  status = 200
+  force = true
+
+# LINE Messaging webhook + unread notifications (badge only)
+[[redirects]]
+  from = "/api/line/webhook"
+  to = "/.netlify/functions/line-webhook"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/line/notifications"
+  to = "/.netlify/functions/line-notifications"
+  status = 200
+  force = true
+
+# React Router SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

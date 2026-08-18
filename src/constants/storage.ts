@@ -1,0 +1,21 @@
+export const SHARED_DRIVE_FOLDER_ID_KEY = "kiddai.web.sharedDriveFolderId";
+export const KIDDAI2_FOLDER_ID_KEY = "kiddai.web.kiddai2FolderId";
+export const WORKFLOW_GOOGLE_SHEET_URL_KEY = "kiddai.workflowGoogleSheetUrl";
+export const WORKFLOW_GOOGLE_SHEET_ID_KEY = "kiddai.workflowGoogleSheetId";
+export const LINKS_WORKSHEET_NAME_KEY = "kiddai.links.worksheetName";
+export const LINKS_QC_CELL_KEY = "kiddai.links.qcCell";
+export const LINKS_QUOTATION_CELL_KEY = "kiddai.links.quotationCell";
+export const LINKS_PRESENT_CELL_KEY = "kiddai.links.presentCell";
+export const LINKS_CACHE_KEY = "kiddai.links.cache";
+export const TEMPLATE_SPREADSHEET_IDS_CACHE_KEY = "kiddai.templateSpreadsheetIdsCache";
+export const GOOGLE_TOKEN_STORAGE_KEY = "kiddai.web.googleToken";
+export const GOOGLE_CONNECTION_STORAGE_KEY = "kiddai.web.googleConnection";
+
+export const DEFAULT_LINKS_WORKSHEET_NAME = "Link";
+export const DEFAULT_LINKS_QC_CELL = "A1";
+export const DEFAULT_LINKS_QUOTATION_CELL = "A2";
+export const DEFAULT_LINKS_PRESENT_CELL = "A3";
+export const DEFAULT_LINKS_STICKER_CELL = "A4";
+export const DEFAULT_WORKFLOW_GOOGLE_SHEET_URL =
+  "https://docs.google.com/spreadsheets/d/1RcmeEsVhPAKD5OJsCnRjBqX3--CkQsOkxe6ZYeFMF6M/edit?usp=sharing";
+export const DEFAULT_WORKFLOW_GOOGLE_SHEET_ID = "1RcmeEsVhPAKD5OJsCnRjBqX3--CkQsOkxe6ZYeFMF6M";
