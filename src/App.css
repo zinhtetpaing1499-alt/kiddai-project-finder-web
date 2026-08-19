@@ -2935,13 +2935,27 @@ a {
 .customer-status--done { background: rgba(112, 138, 115, 0.13); color: #5b765f; }
 .customer-table__actions-heading,
 .customer-table__actions {
-  position: sticky !important;
   right: 0;
-  z-index: 3 !important;
   box-shadow: -10px 0 18px rgba(72, 57, 45, 0.045);
 }
-.customer-table__actions-heading { background: #eee3d5 !important; }
-.customer-table__actions { background: #fffaf3 !important; }
+.customer-table__actions-heading {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: #f5ede1;
+}
+.customer-table__actions {
+  position: sticky;
+  top: auto;
+  z-index: 1;
+  background: #fffaf3;
+}
+.customer-table tbody tr:nth-child(even) .customer-table__actions {
+  background: #f7f1e8;
+}
+.customer-table tbody tr:hover .customer-table__actions {
+  background: #f8f0e5;
+}
 .customer-actions { display: flex; align-items: center; gap: 5px; }
 .customer-action {
   display: inline-flex;
