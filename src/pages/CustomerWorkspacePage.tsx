@@ -1536,88 +1536,91 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
 
   return (
     <div className="customer-workspace">
-      <section className="designer-picker" aria-label="Designers">
-        <div className="designer-picker__tabs">
-          {DESIGNERS.map((designerName) => (
-            <button
-              key={designerName}
-              className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}`}
-              type="button"
-              onClick={() => setDesigner(designerName)}
-            >
-              {designerName}
-            </button>
-          ))}
-        </div>
-      </section>
-
       <section className="customer-list-panel">
-        <div className="customer-list-toolbar">
-          <div className="customer-list-toolbar__title-row">
-            {mode === "deposit" ? (
-              <>
-                <h2>{designer} ·</h2>
-                <div className="customer-view-switch customer-view-switch--solo" role="tablist" aria-label="Deposit list">
-                  <button
-                    className={`customer-view-switch__tab${depositView === "active" ? " customer-view-switch__tab--active" : ""}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={depositView === "active"}
-                    onClick={() => setDepositView("active")}
-                  >
-                    Deposit & Clearing
-                    {tabNotiBadges(activeListUnreadCount, activeListReminderCount)}
-                  </button>
-                </div>
-                <span className="customer-count">{filteredRecords.length} customers</span>
-              </>
-            ) : (
-              <>
-                <h2>
-                  {designer} ·{" "}
-                  <span className="customer-list-toolbar__mode">
-                    Selling
-                    {tabNotiBadges(activeListUnreadCount, activeListReminderCount)}
-                  </span>
-                </h2>
-                <span className="customer-count">{filteredRecords.length} customers</span>
-              </>
-            )}
-          </div>
-          {mode === "deposit" ? (
-            <div className="customer-view-switch customer-view-switch--stage" role="tablist" aria-label="Install lists">
-              <button
-                className={`customer-view-switch__tab${depositView === "waiting" ? " customer-view-switch__tab--active" : ""}`}
-                type="button"
-                role="tab"
-                aria-selected={depositView === "waiting"}
-                onClick={() => setDepositView("waiting")}
-              >
-                Waiting to install
-                {tabNotiBadges(stageUnreadCounts.waiting.unread, stageUnreadCounts.waiting.reminders)}
-              </button>
-              <button
-                className={`customer-view-switch__tab${depositView === "installing" ? " customer-view-switch__tab--active" : ""}`}
-                type="button"
-                role="tab"
-                aria-selected={depositView === "installing"}
-                onClick={() => setDepositView("installing")}
-              >
-                Installing now
-                {tabNotiBadges(stageUnreadCounts.installing.unread, stageUnreadCounts.installing.reminders)}
-              </button>
-              <button
-                className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
-                type="button"
-                role="tab"
-                aria-selected={depositView === "finished"}
-                onClick={() => setDepositView("finished")}
-              >
-                Finished
-                {tabNotiBadges(stageUnreadCounts.finished.unread, stageUnreadCounts.finished.reminders)}
-              </button>
+        <div className="customer-workspace__chrome">
+          <div className="designer-picker" aria-label="Designers">
+            <div className="designer-picker__tabs">
+              {DESIGNERS.map((designerName) => (
+                <button
+                  key={designerName}
+                  className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}`}
+                  type="button"
+                  onClick={() => setDesigner(designerName)}
+                >
+                  {designerName}
+                </button>
+              ))}
             </div>
-          ) : null}
+          </div>
+
+          <div className="customer-list-toolbar">
+            <div className="customer-list-toolbar__title-row">
+              {mode === "deposit" ? (
+                <>
+                  <h2 className="customer-list-toolbar__identity">{designer}</h2>
+                  <div className="customer-view-switch customer-view-switch--solo" role="tablist" aria-label="Deposit list">
+                    <button
+                      className={`customer-view-switch__tab${depositView === "active" ? " customer-view-switch__tab--active" : ""}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={depositView === "active"}
+                      onClick={() => setDepositView("active")}
+                    >
+                      Deposit & Clearing
+                      {tabNotiBadges(activeListUnreadCount, activeListReminderCount)}
+                    </button>
+                  </div>
+                  <span className="customer-count">{filteredRecords.length} customers</span>
+                </>
+              ) : (
+                <>
+                  <h2 className="customer-list-toolbar__identity">
+                    {designer}
+                    <span className="customer-list-toolbar__dot">·</span>
+                    <span className="customer-list-toolbar__mode">
+                      Selling
+                      {tabNotiBadges(activeListUnreadCount, activeListReminderCount)}
+                    </span>
+                  </h2>
+                  <span className="customer-count">{filteredRecords.length} customers</span>
+                </>
+              )}
+            </div>
+            {mode === "deposit" ? (
+              <div className="customer-view-switch customer-view-switch--stage" role="tablist" aria-label="Install lists">
+                <button
+                  className={`customer-view-switch__tab${depositView === "waiting" ? " customer-view-switch__tab--active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={depositView === "waiting"}
+                  onClick={() => setDepositView("waiting")}
+                >
+                  Waiting to install
+                  {tabNotiBadges(stageUnreadCounts.waiting.unread, stageUnreadCounts.waiting.reminders)}
+                </button>
+                <button
+                  className={`customer-view-switch__tab${depositView === "installing" ? " customer-view-switch__tab--active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={depositView === "installing"}
+                  onClick={() => setDepositView("installing")}
+                >
+                  Installing now
+                  {tabNotiBadges(stageUnreadCounts.installing.unread, stageUnreadCounts.installing.reminders)}
+                </button>
+                <button
+                  className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={depositView === "finished"}
+                  onClick={() => setDepositView("finished")}
+                >
+                  Finished
+                  {tabNotiBadges(stageUnreadCounts.finished.unread, stageUnreadCounts.finished.reminders)}
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="customer-search">
