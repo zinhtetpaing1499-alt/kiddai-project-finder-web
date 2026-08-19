@@ -15,6 +15,7 @@ import {
   WORKFLOW_GOOGLE_SHEET_URL_KEY,
 } from "./constants/storage";
 import { GoogleConnectionProvider } from "./contexts/GoogleConnectionContext";
+import { MessagingNotificationsProvider } from "./contexts/MessagingNotificationsContext";
 import { AppShell } from "./layouts/AppShell";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { CustomerWorkspacePage } from "./pages/CustomerWorkspacePage";
@@ -54,16 +55,18 @@ function App() {
 
   return (
     <GoogleConnectionProvider>
-      <Routes>
-        <Route path="/auth/callback" element={<AuthCallbackPage />} />
-        <Route element={<AppShell />}>
-          <Route index element={<Navigate to="/deposit-customers" replace />} />
-          <Route path="/deposit-customers" element={<CustomerWorkspacePage mode="deposit" />} />
-          <Route path="/selling-customers" element={<CustomerWorkspacePage mode="selling" />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/deposit-customers" replace />} />
-        </Route>
-      </Routes>
+      <MessagingNotificationsProvider>
+        <Routes>
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          <Route element={<AppShell />}>
+            <Route index element={<Navigate to="/deposit-customers" replace />} />
+            <Route path="/deposit-customers" element={<CustomerWorkspacePage mode="deposit" />} />
+            <Route path="/selling-customers" element={<CustomerWorkspacePage mode="selling" />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/deposit-customers" replace />} />
+          </Route>
+        </Routes>
+      </MessagingNotificationsProvider>
     </GoogleConnectionProvider>
   );
 }
