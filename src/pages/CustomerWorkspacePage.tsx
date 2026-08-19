@@ -7,8 +7,10 @@ import {
   Presentation,
   Search,
   Sheet,
+  StickyNote,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CustomerTaskNotes } from "../components/CustomerTaskNotes";
 import {
   KIDDAI2_FOLDER_ID_KEY,
   SHARED_DRIVE_FOLDER_ID_KEY,
@@ -59,6 +61,10 @@ import {
   writeCachedWorkspaceLinks,
   writeCachedTemplateSpreadsheetIds,
 } from "../utils/linksSheet";
+import {
+  countOpenCustomerTaskNotes,
+  customerTaskNotesKey,
+} from "../utils/customerTaskNotes";
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
@@ -390,6 +396,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
   const [busyActionKey, setBusyActionKey] = useState("");
+  const [openNotesRecordId, setOpenNotesRecordId] = useState<string | null>(null);
+  const [notesRevision, setNotesRevision] = useState(0);
   const [facebookNotifications, setFacebookNotifications] = useState<FacebookNotification[]>([]);
   const [lineNotifications, setLineNotifications] = useState<LineNotification[]>([]);
   const [pendingLocalFolderChoice, setPendingLocalFolderChoice] =
@@ -518,6 +526,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       requestSequenceRef.current += 1;
     };
   }, [designer, loadDesignerData, mode]);
+
+  useEffect(() => {
+    setOpenNotesRecordId(null);
+  }, [designer, mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1280,6 +1292,28 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }
 
+  function taskNotesKeyFor(record: CustomerRecord) {
+    return customerTaskNotesKey(mode, designer, record.projectNumber, record.customerName);
+  }
+
+  function noteButton(record: CustomerRecord) {
+    const isOpen = openNotesRecordId === record.id;
+    const openCount = countOpenCustomerTaskNotes(taskNotesKeyFor(record));
+    return (
+      <button
+        className={`customer-action customer-action--note${isOpen ? " customer-action--note-open" : ""}`}
+        type="button"
+        onClick={() => setOpenNotesRecordId(isOpen ? null : record.id)}
+        aria-expanded={isOpen}
+        data-notes-revision={notesRevision}
+      >
+        <StickyNote size={14} />
+        Note
+        {openCount > 0 ? <span className="customer-action__note-count">{openCount}</span> : null}
+      </button>
+    );
+  }
+
   function stickerButton(record: CustomerRecord) {
     const isBusy = busyActionKey === `${record.id}:sticker`;
     return (
@@ -1435,7 +1469,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       ? " customer-name--unread"
                       : "";
                   return (
-                  <tr key={record.id} className={rowUnreadClass}>
+                  <Fragment key={record.id}>
+                  <tr className={rowUnreadClass}>
                     <td>
                       <span className="customer-project-number">{record.projectNumber}</span>
                     </td>
@@ -1510,9 +1545,21 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             {actionButton(record, "presentation", "Present", "presentation")}
                           </>
                         )}
+                        {noteButton(record)}
                       </div>
                     </td>
                   </tr>
+                  {openNotesRecordId === record.id ? (
+                    <CustomerTaskNotes
+                      key={taskNotesKeyFor(record)}
+                      notesKey={taskNotesKeyFor(record)}
+                      customerName={record.customerName}
+                      projectNumber={record.projectNumber}
+                      colSpan={mode === "deposit" ? 12 : 6}
+                      onNotesChange={() => setNotesRevision((value) => value + 1)}
+                    />
+                  ) : null}
+                  </Fragment>
                   );
                 })}
               </tbody>
