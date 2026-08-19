@@ -67,7 +67,7 @@ import {
   toggleCustomerCheckReminder,
 } from "../utils/customerCheckReminders";
 import {
-  isInstallStillPending,
+  classifyDepositInstallStatus,
   matchDepositStageOwner,
   parseDepositStageFinished,
   resolveDepositStageWorksheetName,
@@ -127,10 +127,10 @@ type FinishedCachePayload = {
   records: CustomerRecord[];
 };
 
-type DepositListView = "active" | "finished" | "installPending";
+type DepositListView = "active" | "waiting" | "installing" | "finished";
 
 function isDepositStageView(view: DepositListView) {
-  return view === "finished" || view === "installPending";
+  return view === "waiting" || view === "installing" || view === "finished";
 }
 
 type TemplateSpreadsheetIds = Record<CreateSheetKind, string>;
@@ -771,10 +771,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const sourceRecords = useMemo(() => {
     if (mode === "deposit" && isDepositStageView(depositView)) {
       const owned = finishedAll.filter((record) => matchDepositStageOwner(record.owner, designer));
-      if (depositView === "installPending") {
-        return owned.filter((record) => isInstallStillPending(record.installation));
-      }
-      return owned.filter((record) => !isInstallStillPending(record.installation));
+      const status = depositView === "waiting" ? "waiting" : depositView === "installing" ? "installing" : "finished";
+      return owned.filter(
+        (record) => classifyDepositInstallStatus(record.installation) === status,
+      );
     }
     return records;
   }, [depositView, designer, finishedAll, mode, records]);
@@ -1583,6 +1583,24 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       Deposit & Clearing
                     </button>
                     <button
+                      className={`customer-view-switch__tab${depositView === "waiting" ? " customer-view-switch__tab--active" : ""}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={depositView === "waiting"}
+                      onClick={() => setDepositView("waiting")}
+                    >
+                      Waiting to install
+                    </button>
+                    <button
+                      className={`customer-view-switch__tab${depositView === "installing" ? " customer-view-switch__tab--active" : ""}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={depositView === "installing"}
+                      onClick={() => setDepositView("installing")}
+                    >
+                      Installing now
+                    </button>
+                    <button
                       className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
                       type="button"
                       role="tab"
@@ -1590,15 +1608,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("finished")}
                     >
                       Finished
-                    </button>
-                    <button
-                      className={`customer-view-switch__tab${depositView === "installPending" ? " customer-view-switch__tab--active" : ""}`}
-                      type="button"
-                      role="tab"
-                      aria-selected={depositView === "installPending"}
-                      onClick={() => setDepositView("installPending")}
-                    >
-                      Installation pending
                     </button>
                   </div>
                 </>
@@ -1674,20 +1683,24 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
             <strong>
               {query
                 ? "No customers match this search"
-                : depositView === "finished"
-                  ? `No finished customers for ${designer}`
-                  : depositView === "installPending"
-                    ? `No installation-pending customers for ${designer}`
-                    : "No customer rows found"}
+                : depositView === "waiting"
+                  ? `No customers waiting to install for ${designer}`
+                  : depositView === "installing"
+                    ? `No customers currently installing for ${designer}`
+                    : depositView === "finished"
+                      ? `No finished customers for ${designer}`
+                      : "No customer rows found"}
             </strong>
             <span>
               {query
                 ? "Try a different project number or customer name."
-                : depositView === "finished"
-                  ? "Green Deposit Stage rows for this owner whose Install date is today or already past."
-                  : depositView === "installPending"
-                    ? "Green Deposit Stage rows for this owner whose Install date is still in the future."
-                    : `Check the ${designer} worksheet layout in Settings.`}
+                : depositView === "waiting"
+                  ? "Green Deposit Stage rows whose Install date is still in the future."
+                  : depositView === "installing"
+                    ? "Green Deposit Stage rows from Install date through 5 days after."
+                    : depositView === "finished"
+                      ? "Green Deposit Stage rows whose Install date was more than 5 days ago."
+                      : `Check the ${designer} worksheet layout in Settings.`}
             </span>
           </div>
         ) : (

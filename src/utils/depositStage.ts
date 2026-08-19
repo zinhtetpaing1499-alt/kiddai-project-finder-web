@@ -241,15 +241,29 @@ export function parseDepositStageDate(value: string) {
   return parsed;
 }
 
+export type DepositInstallStatus = "waiting" | "installing" | "finished";
+
+const INSTALL_IN_PROGRESS_DAYS = 5;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 function startOfLocalDay(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
 }
 
-/** Install date is still in the future, so the job is not installed yet. */
-export function isInstallStillPending(installation: string, now = new Date()) {
+export function classifyDepositInstallStatus(
+  installation: string,
+  now = new Date(),
+): DepositInstallStatus {
   const installAt = parseDepositStageDate(installation);
   if (!installAt) {
-    return false;
+    return "waiting";
   }
-  return startOfLocalDay(installAt) > startOfLocalDay(now);
+  const diffDays = Math.round((startOfLocalDay(now) - startOfLocalDay(installAt)) / MS_PER_DAY);
+  if (diffDays < 0) {
+    return "waiting";
+  }
+  if (diffDays <= INSTALL_IN_PROGRESS_DAYS) {
+    return "installing";
+  }
+  return "finished";
 }
