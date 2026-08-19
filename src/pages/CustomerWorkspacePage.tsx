@@ -789,6 +789,27 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }, [query, sourceRecords]);
 
+  const stageUnreadCounts = useMemo(() => {
+    const empty = { waiting: 0, installing: 0, finished: 0 };
+    if (mode !== "deposit") {
+      return empty;
+    }
+    const owned = finishedAll.filter((record) => matchDepositStageOwner(record.owner, designer));
+    const grouped = {
+      waiting: [] as CustomerRecord[],
+      installing: [] as CustomerRecord[],
+      finished: [] as CustomerRecord[],
+    };
+    for (const record of owned) {
+      grouped[classifyDepositInstallStatus(record.installation)].push(record);
+    }
+    return {
+      waiting: countDistinctCustomersWithUnread(grouped.waiting, messagingNotifications),
+      installing: countDistinctCustomersWithUnread(grouped.installing, messagingNotifications),
+      finished: countDistinctCustomersWithUnread(grouped.finished, messagingNotifications),
+    };
+  }, [designer, finishedAll, messagingNotifications, mode]);
+
   const matchedUnreadCount = useMemo(
     () => countDistinctCustomersWithUnread(sourceRecords, messagingNotifications),
     [messagingNotifications, sourceRecords],
@@ -1590,6 +1611,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("waiting")}
                     >
                       Waiting to install
+                      {stageUnreadCounts.waiting > 0 ? (
+                        <span className="customer-view-switch__noti">
+                          {stageUnreadCounts.waiting > 9 ? "9+" : stageUnreadCounts.waiting}
+                        </span>
+                      ) : null}
                     </button>
                     <button
                       className={`customer-view-switch__tab${depositView === "installing" ? " customer-view-switch__tab--active" : ""}`}
@@ -1599,6 +1625,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("installing")}
                     >
                       Installing now
+                      {stageUnreadCounts.installing > 0 ? (
+                        <span className="customer-view-switch__noti">
+                          {stageUnreadCounts.installing > 9 ? "9+" : stageUnreadCounts.installing}
+                        </span>
+                      ) : null}
                     </button>
                     <button
                       className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
@@ -1608,6 +1639,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("finished")}
                     >
                       Finished
+                      {stageUnreadCounts.finished > 0 ? (
+                        <span className="customer-view-switch__noti">
+                          {stageUnreadCounts.finished > 9 ? "9+" : stageUnreadCounts.finished}
+                        </span>
+                      ) : null}
                     </button>
                   </div>
                 </>
@@ -1615,7 +1651,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                 <h2>{designer} · Selling</h2>
               )}
               <span className="customer-count">{filteredRecords.length} customers</span>
-              {matchedUnreadCount > 0 ? (
+              {depositView === "active" && matchedUnreadCount > 0 ? (
                 <span
                   className={`customer-noti-pill${matchedUnreadHasLine ? " customer-noti-pill--line" : ""}`}
                   title="New LINE or Facebook messages for customers in this list"
@@ -1624,7 +1660,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   {matchedUnreadCount} new
                 </span>
               ) : null}
-              {matchedReminderCount > 0 ? (
+              {depositView === "active" && matchedReminderCount > 0 ? (
                 <span className="customer-noti-pill customer-noti-pill--remind" title="Customers to check again">
                   <Bell size={13} strokeWidth={2.2} />
                   {matchedReminderCount} check again

@@ -2758,8 +2758,9 @@ a {
   background: rgba(84, 73, 63, 0.08);
 }
 .customer-view-switch__tab {
+  position: relative;
   min-height: 28px;
-  padding: 4px 8px;
+  padding: 4px 10px 4px 8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -2772,6 +2773,23 @@ a {
   background: #fffdf8;
   color: var(--accent-strong);
   box-shadow: 0 1px 2px rgba(72, 57, 45, 0.08);
+}
+.customer-view-switch__noti {
+  position: absolute;
+  top: -5px;
+  right: -3px;
+  display: inline-flex;
+  min-width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #c62828;
+  color: #fffdf8;
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
 }
 .customer-list-toolbar h2 { margin: 0; color: var(--text-primary); font-size: 0.98rem; letter-spacing: -0.02em; }
 .customer-list-toolbar p { margin: 4px 0 0; color: var(--text-muted); font-size: 0.84rem; }
