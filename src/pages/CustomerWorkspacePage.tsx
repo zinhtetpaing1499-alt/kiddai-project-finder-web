@@ -7,10 +7,8 @@ import {
   Presentation,
   Search,
   Sheet,
-  StickyNote,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CustomerTaskNotes } from "../components/CustomerTaskNotes";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   KIDDAI2_FOLDER_ID_KEY,
   SHARED_DRIVE_FOLDER_ID_KEY,
@@ -62,9 +60,11 @@ import {
   writeCachedTemplateSpreadsheetIds,
 } from "../utils/linksSheet";
 import {
-  countOpenCustomerTaskNotes,
-  customerTaskNotesKey,
-} from "../utils/customerTaskNotes";
+  countCustomerCheckReminders,
+  customerReminderKey,
+  hasCustomerCheckReminder,
+  toggleCustomerCheckReminder,
+} from "../utils/customerCheckReminders";
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
@@ -384,6 +384,23 @@ function unreadSourcesForCustomer(unreadForRow: MessagingNotification[]) {
   return { hasLine, hasFacebook };
 }
 
+function designerReminderCount(
+  mode: CustomerMode,
+  designerName: DesignerName,
+  liveRecords: CustomerRecord[],
+  liveDesigner: DesignerName,
+) {
+  const records =
+    designerName === liveDesigner
+      ? liveRecords
+      : (readCache(mode, designerName)?.records ?? []);
+  return countCustomerCheckReminders(
+    records.map((record) =>
+      customerReminderKey(mode, designerName, record.projectNumber, record.customerName),
+    ),
+  );
+}
+
 export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const { connection, refreshGoogleConnection } = useGoogleConnection();
   const [designer, setDesigner] = useState<DesignerName>("Tod");
@@ -396,8 +413,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
   const [busyActionKey, setBusyActionKey] = useState("");
-  const [openNotesRecordId, setOpenNotesRecordId] = useState<string | null>(null);
-  const [notesRevision, setNotesRevision] = useState(0);
+  const [reminderRevision, setReminderRevision] = useState(0);
   const [facebookNotifications, setFacebookNotifications] = useState<FacebookNotification[]>([]);
   const [lineNotifications, setLineNotifications] = useState<LineNotification[]>([]);
   const [pendingLocalFolderChoice, setPendingLocalFolderChoice] =
@@ -528,10 +544,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }, [designer, loadDesignerData, mode]);
 
   useEffect(() => {
-    setOpenNotesRecordId(null);
-  }, [designer, mode]);
-
-  useEffect(() => {
     let cancelled = false;
 
     async function refreshMessagingNotifications() {
@@ -587,6 +599,13 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     () => countDistinctCustomersWithUnread(records, messagingNotifications),
     [messagingNotifications, records],
   );
+
+  const matchedReminderCount = useMemo(() => {
+    const keys = records.map((record) =>
+      customerReminderKey(mode, designer, record.projectNumber, record.customerName),
+    );
+    return reminderRevision >= 0 ? countCustomerCheckReminders(keys) : 0;
+  }, [records, reminderRevision, designer, mode]);
 
   const matchedUnreadHasLine = useMemo(
     () =>
@@ -1292,24 +1311,28 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }
 
-  function taskNotesKeyFor(record: CustomerRecord) {
-    return customerTaskNotesKey(mode, designer, record.projectNumber, record.customerName);
+  function reminderKeyFor(record: CustomerRecord, designerName: DesignerName = designer) {
+    return customerReminderKey(mode, designerName, record.projectNumber, record.customerName);
   }
 
-  function noteButton(record: CustomerRecord) {
-    const isOpen = openNotesRecordId === record.id;
-    const openCount = countOpenCustomerTaskNotes(taskNotesKeyFor(record));
+  function toggleReminder(record: CustomerRecord) {
+    toggleCustomerCheckReminder(reminderKeyFor(record));
+    setReminderRevision((value) => value + 1);
+  }
+
+  function remindButton(record: CustomerRecord) {
+    const isOn = hasCustomerCheckReminder(reminderKeyFor(record));
     return (
       <button
-        className={`customer-action customer-action--note${isOpen ? " customer-action--note-open" : ""}`}
+        className={`customer-action customer-action--remind${isOn ? " customer-action--remind-on" : ""}`}
         type="button"
-        onClick={() => setOpenNotesRecordId(isOpen ? null : record.id)}
-        aria-expanded={isOpen}
-        data-notes-revision={notesRevision}
+        onClick={() => toggleReminder(record)}
+        aria-pressed={isOn}
+        data-reminder-revision={reminderRevision}
+        title={isOn ? "Remove check-again reminder" : "Remind me to check this customer again"}
       >
-        <StickyNote size={14} />
-        Note
-        {openCount > 0 ? <span className="customer-action__note-count">{openCount}</span> : null}
+        <Bell size={14} />
+        {isOn ? "Reminded" : "Remind"}
       </button>
     );
   }
@@ -1342,6 +1365,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               records,
               designer,
             );
+            const reminders = designerReminderCount(mode, designerName, records, designer);
             return (
               <button
                 key={designerName}
@@ -1351,6 +1375,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               >
                 {designerName}
                 {unread > 0 ? <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span> : null}
+                {reminders > 0 ? (
+                  <span className="designer-picker__badge designer-picker__badge--remind">
+                    {reminders > 9 ? "9+" : reminders}
+                  </span>
+                ) : null}
               </button>
             );
           })}
@@ -1372,6 +1401,12 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                 >
                   <Bell size={13} strokeWidth={2.2} />
                   {matchedUnreadCount} new
+                </span>
+              ) : null}
+              {matchedReminderCount > 0 ? (
+                <span className="customer-noti-pill customer-noti-pill--remind" title="Customers to check again">
+                  <Bell size={13} strokeWidth={2.2} />
+                  {matchedReminderCount} check again
                 </span>
               ) : null}
             </div>
@@ -1455,56 +1490,79 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     messagingNotifications,
                     record.customerName,
                   );
+                  const hasRemind = hasCustomerCheckReminder(reminderKeyFor(record));
                   const { hasLine, hasFacebook } = unreadSourcesForCustomer(unreadForRow);
                   const hasUnread = unreadForRow.length > 0;
                   const latestPreview = unreadForRow[0]?.preview;
-                  const rowUnreadClass = hasLine
-                    ? "customer-row--unread customer-row--unread-line"
-                    : hasFacebook
-                      ? "customer-row--unread"
-                      : undefined;
+                  const rowClass = [
+                    hasUnread && hasLine ? "customer-row--unread customer-row--unread-line" : "",
+                    hasUnread && !hasLine ? "customer-row--unread" : "",
+                    hasRemind && !hasUnread ? "customer-row--remind" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined;
                   const nameUnreadClass = hasLine
                     ? " customer-name--unread customer-name--unread-line"
                     : hasFacebook
                       ? " customer-name--unread"
-                      : "";
+                      : hasRemind
+                        ? " customer-name--remind"
+                        : "";
                   return (
-                  <Fragment key={record.id}>
-                  <tr className={rowUnreadClass}>
+                  <tr key={record.id} className={rowClass}>
                     <td>
                       <span className="customer-project-number">{record.projectNumber}</span>
                     </td>
                     <td>
-                      <button
-                        className={`customer-name${nameUnreadClass}`}
-                        type="button"
-                        onClick={() => void openCustomerContact(record)}
-                        title={latestPreview ? `New message: ${latestPreview}` : undefined}
-                      >
-                        {hasLine ? (
-                          <span
-                            className="customer-name__bell customer-name__bell--on customer-name__bell--line"
-                            aria-label="New LINE message"
+                      <div className="customer-name-row">
+                        {hasRemind ? (
+                          <button
+                            className="customer-name__bell customer-name__bell--on customer-name__bell--remind"
+                            type="button"
+                            onClick={() => toggleReminder(record)}
+                            title="Remove check-again reminder"
+                            aria-label="Remove check-again reminder"
                           >
                             <Bell size={14} strokeWidth={2.5} />
-                          </span>
+                          </button>
                         ) : null}
-                        {hasFacebook ? (
-                          <span
-                            className="customer-name__bell customer-name__bell--on"
-                            aria-label="New Facebook message"
-                          >
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        {!hasUnread ? (
-                          <span className="customer-name__bell" aria-hidden>
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        <span className="customer-name__text">{record.customerName}</span>
-                        <ExternalLink size={13} />
-                      </button>
+                        <button
+                          className={`customer-name${nameUnreadClass}`}
+                          type="button"
+                          onClick={() => void openCustomerContact(record)}
+                          title={
+                            hasRemind
+                              ? "Check this customer again"
+                              : latestPreview
+                                ? `New message: ${latestPreview}`
+                                : undefined
+                          }
+                        >
+                          {hasLine ? (
+                            <span
+                              className="customer-name__bell customer-name__bell--on customer-name__bell--line"
+                              aria-label="New LINE message"
+                            >
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          {hasFacebook ? (
+                            <span
+                              className="customer-name__bell customer-name__bell--on"
+                              aria-label="New Facebook message"
+                            >
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          {!hasUnread && !hasRemind ? (
+                            <span className="customer-name__bell" aria-hidden>
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          <span className="customer-name__text">{record.customerName}</span>
+                          <ExternalLink size={13} />
+                        </button>
+                      </div>
                     </td>
                     <td className="customer-table__amount">{statusLabel(record.amount)}</td>
                     <td>{statusLabel(record.deadline)}</td>
@@ -1545,21 +1603,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             {actionButton(record, "presentation", "Present", "presentation")}
                           </>
                         )}
-                        {noteButton(record)}
+                        {remindButton(record)}
                       </div>
                     </td>
                   </tr>
-                  {openNotesRecordId === record.id ? (
-                    <CustomerTaskNotes
-                      key={taskNotesKeyFor(record)}
-                      notesKey={taskNotesKeyFor(record)}
-                      customerName={record.customerName}
-                      projectNumber={record.projectNumber}
-                      colSpan={mode === "deposit" ? 12 : 6}
-                      onNotesChange={() => setNotesRevision((value) => value + 1)}
-                    />
-                  ) : null}
-                  </Fragment>
                   );
                 })}
               </tbody>

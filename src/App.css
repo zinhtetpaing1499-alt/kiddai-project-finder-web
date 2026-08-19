@@ -2637,6 +2637,13 @@ a {
   background: rgba(46, 125, 70, 0.12);
   color: #2a6b3c;
 }
+.designer-picker__badge--remind {
+  background: #e67a22;
+}
+.customer-noti-pill--remind {
+  background: rgba(230, 122, 34, 0.14);
+  color: #c45e10;
+}
 .customer-noti-hint {
   margin: 6px 0 0;
   max-width: 52rem;
@@ -2655,6 +2662,18 @@ a {
 }
 .customer-name--unread-line {
   color: #2a6b3c;
+}
+.customer-row--remind td {
+  background: rgba(230, 122, 34, 0.08) !important;
+}
+.customer-name-row {
+  display: inline-flex;
+  max-width: 280px;
+  align-items: center;
+  gap: 6px;
+}
+.customer-name--remind {
+  color: #c45e10;
 }
 .customer-name__bell {
   display: inline-flex;
@@ -2680,6 +2699,16 @@ a {
   box-shadow: 0 0 0 3px rgba(46, 125, 70, 0.22);
   animation: customer-bell-pulse-line 1.6s ease-in-out infinite;
 }
+.customer-name__bell--remind {
+  visibility: visible;
+  border: 0;
+  padding: 0;
+  color: #fffdf8;
+  background: #e67a22;
+  box-shadow: 0 0 0 3px rgba(230, 122, 34, 0.28);
+  animation: customer-bell-pulse-remind 1.6s ease-in-out infinite;
+  cursor: pointer;
+}
 .customer-name__text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2700,6 +2729,15 @@ a {
   }
   50% {
     box-shadow: 0 0 0 5px rgba(46, 125, 70, 0.3);
+  }
+}
+@keyframes customer-bell-pulse-remind {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(230, 122, 34, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(230, 122, 34, 0.38);
   }
 }
 .customer-list-panel { min-width: 0; overflow: hidden; }
@@ -2865,125 +2903,10 @@ a {
   color: #9a6828;
 }
 .customer-action__spinner { animation: customer-spin 0.9s linear infinite; }
-.customer-action--note-open {
-  border-color: var(--border-strong);
-  background: #f5ede1;
-  color: var(--accent-strong);
-}
-.customer-action__note-count {
-  display: inline-flex;
-  min-width: 16px;
-  height: 16px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: #c62828;
-  color: #fffdf8;
-  font-size: 0.66rem;
-  font-weight: 800;
-  line-height: 1;
-}
-.customer-notes-row td {
-  padding: 0 12px 12px;
-  background: #f8f1e7 !important;
-  white-space: normal;
-}
-.customer-table tbody tr.customer-notes-row:hover td {
-  background: #f8f1e7 !important;
-}
-.customer-task-notes {
-  display: grid;
-  gap: 10px;
-  padding: 12px 14px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #fffdf8;
-}
-.customer-task-notes__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.customer-task-notes__title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-primary);
-  font-size: 0.82rem;
-  font-weight: 800;
-}
-.customer-task-notes__count {
-  color: var(--text-muted);
-  font-size: 0.76rem;
-  font-weight: 700;
-}
-.customer-task-notes__empty {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 0.82rem;
-}
-.customer-task-notes__list {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.customer-task-notes__item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 7px 9px;
-  border-radius: 8px;
-  background: rgba(84, 73, 63, 0.05);
-  color: var(--text-primary);
-  font-size: 0.84rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-.customer-task-notes__item input {
-  margin-top: 3px;
-  accent-color: #5b765f;
-}
-.customer-task-notes__item span {
-  min-width: 0;
-  white-space: normal;
-}
-.customer-task-notes__form {
-  display: flex;
-  gap: 8px;
-}
-.customer-task-notes__form input {
-  flex: 1;
-  min-width: 0;
-  min-height: 34px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: white;
-  color: var(--text-primary);
-  font-size: 0.84rem;
-}
-.customer-task-notes__form input:focus {
-  outline: none;
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 3px rgba(84, 73, 63, 0.06);
-}
-.customer-task-notes__form button {
-  min-height: 34px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--accent);
-  color: white;
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-.customer-task-notes__form button:disabled {
-  cursor: default;
-  opacity: 0.45;
+.customer-action--remind-on {
+  border-color: #e67a22;
+  background: #f4e1cc;
+  color: #c45e10;
 }
 @keyframes customer-spin { to { transform: rotate(360deg); } }
 @keyframes customer-busy-pulse {
