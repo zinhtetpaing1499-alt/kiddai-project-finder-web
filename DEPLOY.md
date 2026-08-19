@@ -2,13 +2,9 @@
 
 ## Folder to deploy
 
-Upload / connect this folder only:
+This GitHub repo (`kiddai-project-finder-web`) deploys from the **repo root**. Leave Base directory empty.
 
-```text
-kiddai-project-finder/web
-```
-
-Do **not** deploy the parent desktop/Tauri folder.
+If this code still lives as `kiddai-project-finder/web` inside the desktop app, use Base directory `web`.
 
 ## Netlify settings
 
