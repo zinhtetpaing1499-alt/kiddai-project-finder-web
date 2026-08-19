@@ -352,7 +352,6 @@ a {
 }
 
 .sidebar-nav__item {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -389,29 +388,8 @@ a {
 }
 
 .sidebar-nav__label {
-  position: relative;
   font-size: 0.86rem;
   font-weight: 600;
-}
-
-.sidebar-nav__noti {
-  position: absolute;
-  top: -8px;
-  left: 50%;
-  right: auto;
-  display: inline-flex;
-  min-width: 14px;
-  height: 14px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 3px;
-  border-radius: 999px;
-  background: #c62828;
-  color: #fffdf8;
-  font-size: 0.58rem;
-  font-weight: 800;
-  line-height: 1;
-  transform: translateX(-50%);
 }
 
 .sidebar-footer {
@@ -2762,7 +2740,7 @@ a {
     box-shadow: 0 0 0 5px rgba(230, 122, 34, 0.38);
   }
 }
-.customer-list-panel { min-width: 0; overflow: visible; }
+.customer-list-panel { min-width: 0; overflow: hidden; }
 .customer-list-toolbar {
   display: flex;
   align-items: center;
@@ -2770,27 +2748,19 @@ a {
   gap: 16px;
   padding: 16px 18px 12px;
 }
-.customer-list-toolbar__title-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding-top: 8px;
-}
+.customer-list-toolbar__title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .customer-view-switch {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 8px 4px 3px;
-  overflow: visible;
+  padding: 3px;
   border-radius: 10px;
   background: rgba(84, 73, 63, 0.08);
 }
 .customer-view-switch__tab {
   position: relative;
   min-height: 28px;
-  padding: 6px 10px 4px;
-  overflow: visible;
+  padding: 4px 10px 4px 8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -2806,9 +2776,8 @@ a {
 }
 .customer-view-switch__noti {
   position: absolute;
-  top: -7px;
-  left: 50%;
-  right: auto;
+  top: -5px;
+  right: -3px;
   display: inline-flex;
   min-width: 14px;
   height: 14px;
@@ -2821,15 +2790,8 @@ a {
   font-size: 0.58rem;
   font-weight: 800;
   line-height: 1;
-  transform: translateX(-50%);
-  pointer-events: none;
 }
 .customer-list-toolbar h2 { margin: 0; color: var(--text-primary); font-size: 0.98rem; letter-spacing: -0.02em; }
-.customer-list-toolbar__mode {
-  position: relative;
-  display: inline-block;
-  padding-right: 8px;
-}
 .customer-list-toolbar p { margin: 4px 0 0; color: var(--text-muted); font-size: 0.84rem; }
 .customer-count {
   padding: 3px 8px;
