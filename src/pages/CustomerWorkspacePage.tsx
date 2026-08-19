@@ -1,5 +1,4 @@
 import {
-  Bell,
   CheckCircle2,
   ExternalLink,
   FolderOpen,
@@ -56,7 +55,6 @@ import {
   writeCachedTemplateSpreadsheetIds,
 } from "../utils/linksSheet";
 import {
-  countCustomerCheckReminders,
   customerReminderKey,
   hasCustomerCheckReminder,
   toggleCustomerCheckReminder,
@@ -71,7 +69,7 @@ import {
   CUSTOMER_CACHE_VERSION,
   DESIGNERS,
   FINISHED_CACHE_VERSION,
-  countDistinctCustomersWithUnread,
+  countAttentionForDesignerList,
   formatNotiCount,
   notifyCustomerListsChanged,
   type CustomerMode,
@@ -664,6 +662,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }, [query, sourceRecords]);
 
   const stageUnreadCounts = useMemo(() => {
+    void reminderRevision;
     const empty = { waiting: 0, installing: 0, finished: 0 };
     if (mode !== "deposit") {
       return empty;
@@ -678,23 +677,16 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       grouped[classifyDepositInstallStatus(record.installation)].push(record);
     }
     return {
-      waiting: countDistinctCustomersWithUnread(grouped.waiting, messagingNotifications),
-      installing: countDistinctCustomersWithUnread(grouped.installing, messagingNotifications),
-      finished: countDistinctCustomersWithUnread(grouped.finished, messagingNotifications),
+      waiting: countAttentionForDesignerList(grouped.waiting, messagingNotifications, mode, designer),
+      installing: countAttentionForDesignerList(grouped.installing, messagingNotifications, mode, designer),
+      finished: countAttentionForDesignerList(grouped.finished, messagingNotifications, mode, designer),
     };
-  }, [designer, finishedAll, messagingNotifications, mode]);
+  }, [designer, finishedAll, messagingNotifications, mode, reminderRevision]);
 
-  const headingUnreadCount = useMemo(
-    () => countDistinctCustomersWithUnread(records, messagingNotifications),
-    [messagingNotifications, records],
-  );
-
-  const matchedReminderCount = useMemo(() => {
-    const keys = sourceRecords.map((record) =>
-      customerReminderKey(mode, designer, record.projectNumber, record.customerName),
-    );
-    return reminderRevision >= 0 ? countCustomerCheckReminders(keys) : 0;
-  }, [sourceRecords, reminderRevision, designer, mode]);
+  const headingUnreadCount = useMemo(() => {
+    void reminderRevision;
+    return countAttentionForDesignerList(records, messagingNotifications, mode, designer);
+  }, [designer, messagingNotifications, mode, records, reminderRevision]);
 
   async function resolveTemplateSpreadsheetIds() {
     const memoryValue = templateIdsCacheRef.current;
@@ -1394,7 +1386,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
 
   function toggleReminder(record: CustomerRecord) {
     toggleCustomerCheckReminder(reminderKeyFor(record));
+    notifyCustomerListsChanged();
     setReminderRevision((value) => value + 1);
+  }
+
+  function listNoti(count: number) {
+    if (count <= 0) {
+      return null;
+    }
+    return <span className="customer-view-switch__noti">{formatNotiCount(count)}</span>;
   }
 
   function stickerButton(record: CustomerRecord) {
@@ -1446,11 +1446,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("active")}
                     >
                       Deposit & Clearing
-                      {headingUnreadCount > 0 ? (
-                        <span className="customer-view-switch__noti">
-                          {formatNotiCount(headingUnreadCount)}
-                        </span>
-                      ) : null}
+                      {listNoti(headingUnreadCount)}
                     </button>
                     <button
                       className={`customer-view-switch__tab${depositView === "waiting" ? " customer-view-switch__tab--active" : ""}`}
@@ -1460,11 +1456,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("waiting")}
                     >
                       Waiting to install
-                      {stageUnreadCounts.waiting > 0 ? (
-                        <span className="customer-view-switch__noti">
-                          {formatNotiCount(stageUnreadCounts.waiting)}
-                        </span>
-                      ) : null}
+                      {listNoti(stageUnreadCounts.waiting)}
                     </button>
                     <button
                       className={`customer-view-switch__tab${depositView === "installing" ? " customer-view-switch__tab--active" : ""}`}
@@ -1474,11 +1466,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("installing")}
                     >
                       Installing now
-                      {stageUnreadCounts.installing > 0 ? (
-                        <span className="customer-view-switch__noti">
-                          {formatNotiCount(stageUnreadCounts.installing)}
-                        </span>
-                      ) : null}
+                      {listNoti(stageUnreadCounts.installing)}
                     </button>
                     <button
                       className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
@@ -1488,11 +1476,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("finished")}
                     >
                       Finished
-                      {stageUnreadCounts.finished > 0 ? (
-                        <span className="customer-view-switch__noti">
-                          {formatNotiCount(stageUnreadCounts.finished)}
-                        </span>
-                      ) : null}
+                      {listNoti(stageUnreadCounts.finished)}
                     </button>
                   </div>
                 </>
@@ -1501,21 +1485,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   {designer} ·{" "}
                   <span className="customer-list-toolbar__mode">
                     Selling
-                    {headingUnreadCount > 0 ? (
-                      <span className="customer-view-switch__noti">
-                        {formatNotiCount(headingUnreadCount)}
-                      </span>
-                    ) : null}
+                    {listNoti(headingUnreadCount)}
                   </span>
                 </h2>
               )}
               <span className="customer-count">{filteredRecords.length} customers</span>
-              {depositView === "active" && matchedReminderCount > 0 ? (
-                <span className="customer-noti-pill customer-noti-pill--remind" title="Customers to check again">
-                  <Bell size={13} strokeWidth={2.2} />
-                  {matchedReminderCount} check again
-                </span>
-              ) : null}
             </div>
           </div>
           <div className={`customer-sync${loadWarning ? " customer-sync--warning" : ""}`}>
@@ -1620,7 +1594,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     record.customerName,
                   );
                   const hasRemind = hasCustomerCheckReminder(reminderKeyFor(record));
-                  const { hasLine, hasFacebook } = unreadSourcesForCustomer(unreadForRow);
+                  const { hasLine } = unreadSourcesForCustomer(unreadForRow);
                   const hasUnread = unreadForRow.length > 0;
                   const latestPreview = unreadForRow[0]?.preview;
                   const rowClass = [
@@ -1630,13 +1604,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   ]
                     .filter(Boolean)
                     .join(" ") || undefined;
-                  const nameUnreadClass = hasLine
-                    ? " customer-name--unread customer-name--unread-line"
-                    : hasFacebook
-                      ? " customer-name--unread"
-                      : hasRemind
-                        ? " customer-name--remind"
-                        : "";
                   return (
                   <tr key={record.id} className={rowClass}>
                     <td>
@@ -1653,61 +1620,23 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             toggleReminder(record);
                           }
                         }}
-                        title="Triple-click to show or hide the orange reminder"
+                        title="Triple-click to flag this customer for the list count"
                       >
                         {record.projectNumber}
                       </button>
                     </td>
                     <td>
-                      <div className="customer-name-row">
-                        {hasRemind ? (
-                          <button
-                            className="customer-name__bell customer-name__bell--on customer-name__bell--remind"
-                            type="button"
-                            onClick={() => toggleReminder(record)}
-                            title="Hide orange reminder"
-                            aria-label="Hide orange reminder"
-                          >
-                            <Bell size={14} strokeWidth={2.5} />
-                          </button>
-                        ) : null}
-                        <button
-                          className={`customer-name${nameUnreadClass}`}
-                          type="button"
-                          onClick={() => void openCustomerContact(record)}
-                          title={
-                            hasRemind
-                              ? "Check this customer again"
-                              : latestPreview
-                                ? `New message: ${latestPreview}`
-                                : undefined
-                          }
-                        >
-                          {hasLine ? (
-                            <span
-                              className="customer-name__bell customer-name__bell--on customer-name__bell--line"
-                              aria-label="New LINE message"
-                            >
-                              <Bell size={14} strokeWidth={2.5} />
-                            </span>
-                          ) : null}
-                          {hasFacebook ? (
-                            <span
-                              className="customer-name__bell customer-name__bell--on"
-                              aria-label="New Facebook message"
-                            >
-                              <Bell size={14} strokeWidth={2.5} />
-                            </span>
-                          ) : null}
-                          {!hasUnread && !hasRemind ? (
-                            <span className="customer-name__bell" aria-hidden>
-                              <Bell size={14} strokeWidth={2.5} />
-                            </span>
-                          ) : null}
-                          <span className="customer-name__text">{record.customerName}</span>
-                          <ExternalLink size={13} />
-                        </button>
-                      </div>
+                      <button
+                        className="customer-name"
+                        type="button"
+                        onClick={() => void openCustomerContact(record)}
+                        title={
+                          latestPreview ? `New message: ${latestPreview}` : undefined
+                        }
+                      >
+                        <span className="customer-name__text">{record.customerName}</span>
+                        <ExternalLink size={13} />
+                      </button>
                     </td>
                     <td className="customer-table__amount">{statusLabel(record.amount)}</td>
                     <td>{statusLabel(record.deadline)}</td>

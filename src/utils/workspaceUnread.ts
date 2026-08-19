@@ -1,6 +1,8 @@
 import { notificationAppliesToCustomer } from "../services/facebookNotifications";
 import type { FacebookNotification } from "../services/facebookNotifications";
 import type { LineNotification } from "../services/lineNotifications";
+import { customerReminderKey, hasCustomerCheckReminder } from "./customerCheckReminders";
+import { matchDepositStageOwner } from "./depositStage";
 
 export const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 export const CUSTOMER_CACHE_VERSION = 1;
@@ -19,8 +21,10 @@ export type MessagingNotification = {
   source: "facebook" | "line";
 };
 
-type CachedCustomerName = {
+type CachedCustomer = {
   customerName: string;
+  projectNumber?: string;
+  designer?: DesignerName;
 };
 
 export function notifyCustomerListsChanged() {
@@ -53,34 +57,54 @@ export function mergeMessagingNotifications(
   return merged;
 }
 
-export function countDistinctCustomersWithUnread(
-  records: CachedCustomerName[],
+function recordHasUnread(customerName: string, notifications: MessagingNotification[]) {
+  return notifications.some((item) =>
+    notificationAppliesToCustomer(item.senderName, customerName, item.source),
+  );
+}
+
+export function countDistinctCustomersNeedingAttention(
+  records: CachedCustomer[],
   notifications: MessagingNotification[],
+  mode: CustomerMode,
 ) {
-  if (records.length === 0 || notifications.length === 0) {
-    return 0;
-  }
   const seen = new Set<string>();
   let count = 0;
   for (const record of records) {
-    const key = record.customerName.trim().toLocaleLowerCase();
-    if (!key || seen.has(key)) {
+    const identity = `${record.designer ?? ""}:${record.projectNumber ?? ""}:${record.customerName.trim().toLocaleLowerCase()}`;
+    if (!record.customerName.trim() || seen.has(identity)) {
       continue;
     }
-    if (
-      notifications.some((item) =>
-        notificationAppliesToCustomer(item.senderName, record.customerName, item.source),
-      )
-    ) {
-      seen.add(key);
+    const unread = recordHasUnread(record.customerName, notifications);
+    const remind =
+      record.designer && record.projectNumber
+        ? hasCustomerCheckReminder(
+            customerReminderKey(mode, record.designer, record.projectNumber, record.customerName),
+          )
+        : false;
+    if (unread || remind) {
+      seen.add(identity);
       count += 1;
     }
   }
   return count;
 }
 
-function readCachedRecords(mode: CustomerMode): CachedCustomerName[] {
-  const records: CachedCustomerName[] = [];
+export function countAttentionForDesignerList(
+  records: Array<{ customerName: string; projectNumber: string }>,
+  notifications: MessagingNotification[],
+  mode: CustomerMode,
+  designer: DesignerName,
+) {
+  return countDistinctCustomersNeedingAttention(
+    records.map((record) => ({ ...record, designer })),
+    notifications,
+    mode,
+  );
+}
+
+function readCachedRecords(mode: CustomerMode): CachedCustomer[] {
+  const records: CachedCustomer[] = [];
   for (const designer of DESIGNERS) {
     const rawValue = window.localStorage.getItem(
       `kiddai.customerWorkspace.${CUSTOMER_CACHE_VERSION}.${mode}.${designer}`,
@@ -92,7 +116,7 @@ function readCachedRecords(mode: CustomerMode): CachedCustomerName[] {
       const parsed = JSON.parse(rawValue) as {
         version?: number;
         mode?: string;
-        records?: CachedCustomerName[];
+        records?: Array<{ customerName?: string; projectNumber?: string }>;
       };
       if (
         parsed.version !== CUSTOMER_CACHE_VERSION ||
@@ -103,7 +127,11 @@ function readCachedRecords(mode: CustomerMode): CachedCustomerName[] {
       }
       for (const record of parsed.records) {
         if (typeof record?.customerName === "string") {
-          records.push({ customerName: record.customerName });
+          records.push({
+            customerName: record.customerName,
+            projectNumber: typeof record.projectNumber === "string" ? record.projectNumber : undefined,
+            designer,
+          });
         }
       }
     } catch {
@@ -113,7 +141,7 @@ function readCachedRecords(mode: CustomerMode): CachedCustomerName[] {
   return records;
 }
 
-function readFinishedRecords(): CachedCustomerName[] {
+function readFinishedRecords(): CachedCustomer[] {
   try {
     const rawValue = window.localStorage.getItem(
       `kiddai.depositStageFinished.${FINISHED_CACHE_VERSION}`,
@@ -123,27 +151,38 @@ function readFinishedRecords(): CachedCustomerName[] {
     }
     const parsed = JSON.parse(rawValue) as {
       version?: number;
-      records?: CachedCustomerName[];
+      records?: Array<{ customerName?: string; projectNumber?: string; owner?: string }>;
     };
     if (parsed.version !== FINISHED_CACHE_VERSION || !Array.isArray(parsed.records)) {
       return [];
     }
-    return parsed.records.filter(
-      (record): record is CachedCustomerName => typeof record?.customerName === "string",
-    );
+    const records: CachedCustomer[] = [];
+    for (const record of parsed.records) {
+      if (typeof record?.customerName !== "string") {
+        continue;
+      }
+      const designer = DESIGNERS.find((name) => matchDepositStageOwner(record.owner ?? "", name));
+      records.push({
+        customerName: record.customerName,
+        projectNumber: typeof record.projectNumber === "string" ? record.projectNumber : undefined,
+        designer,
+      });
+    }
+    return records;
   } catch {
     return [];
   }
 }
 
 export function countSellingWorkspaceUnread(notifications: MessagingNotification[]) {
-  return countDistinctCustomersWithUnread(readCachedRecords("selling"), notifications);
+  return countDistinctCustomersNeedingAttention(readCachedRecords("selling"), notifications, "selling");
 }
 
 export function countDepositWorkspaceUnread(notifications: MessagingNotification[]) {
-  return countDistinctCustomersWithUnread(
+  return countDistinctCustomersNeedingAttention(
     [...readCachedRecords("deposit"), ...readFinishedRecords()],
     notifications,
+    "deposit",
   );
 }
 
