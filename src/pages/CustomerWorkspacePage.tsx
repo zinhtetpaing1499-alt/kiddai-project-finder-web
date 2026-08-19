@@ -1494,20 +1494,37 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   return (
                   <tr key={record.id} className={rowClass}>
                     <td>
-                      <span className="customer-project-number">{record.projectNumber}</span>
+                      <button
+                        className="customer-project-number"
+                        type="button"
+                        onMouseDown={(event) => {
+                          if (event.detail === 3) {
+                            event.preventDefault();
+                          }
+                        }}
+                        onClick={(event) => {
+                          if (event.detail === 3) {
+                            toggleReminder(record);
+                          }
+                        }}
+                        title="Triple-click to show or hide the orange reminder"
+                      >
+                        {record.projectNumber}
+                      </button>
                     </td>
                     <td>
                       <div className="customer-name-row">
-                        <button
-                          className={`customer-name__bell${hasRemind ? " customer-name__bell--on customer-name__bell--remind" : " customer-name__bell--remind-off"}`}
-                          type="button"
-                          onClick={() => toggleReminder(record)}
-                          title={hasRemind ? "Hide orange reminder" : "Show orange reminder"}
-                          aria-label={hasRemind ? "Hide orange reminder" : "Show orange reminder"}
-                          aria-pressed={hasRemind}
-                        >
-                          <Bell size={14} strokeWidth={2.5} />
-                        </button>
+                        {hasRemind ? (
+                          <button
+                            className="customer-name__bell customer-name__bell--on customer-name__bell--remind"
+                            type="button"
+                            onClick={() => toggleReminder(record)}
+                            title="Hide orange reminder"
+                            aria-label="Hide orange reminder"
+                          >
+                            <Bell size={14} strokeWidth={2.5} />
+                          </button>
+                        ) : null}
                         <button
                           className={`customer-name${nameUnreadClass}`}
                           type="button"
@@ -1533,6 +1550,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                               className="customer-name__bell customer-name__bell--on"
                               aria-label="New Facebook message"
                             >
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          {!hasUnread && !hasRemind ? (
+                            <span className="customer-name__bell" aria-hidden>
                               <Bell size={14} strokeWidth={2.5} />
                             </span>
                           ) : null}

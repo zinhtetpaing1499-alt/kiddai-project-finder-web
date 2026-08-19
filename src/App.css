@@ -2699,17 +2699,6 @@ a {
   box-shadow: 0 0 0 3px rgba(46, 125, 70, 0.22);
   animation: customer-bell-pulse-line 1.6s ease-in-out infinite;
 }
-.customer-name__bell--remind-off {
-  visibility: hidden;
-  border: 0;
-  padding: 0;
-  color: #e67a22;
-  background: rgba(230, 122, 34, 0.12);
-  cursor: pointer;
-}
-.customer-table tbody tr:hover .customer-name__bell--remind-off {
-  visibility: visible;
-}
 .customer-name__bell--remind {
   visibility: visible;
   border: 0;
@@ -2839,10 +2828,17 @@ a {
 .customer-project-number {
   display: inline-flex;
   padding: 4px 8px;
+  border: 0;
   border-radius: 8px;
   background: var(--bg-active);
   color: var(--accent-strong);
+  font: inherit;
   font-weight: 800;
+  cursor: pointer;
+  user-select: none;
+}
+.customer-project-number:hover {
+  background: #eadccb;
 }
 .customer-name {
   display: inline-flex;
