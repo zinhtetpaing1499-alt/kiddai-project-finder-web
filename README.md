@@ -33,13 +33,13 @@ npm run dev
 
 Open `http://localhost:5173`.
 
-2. Optional Google OAuth file (needed for **Connect Google** on your machine):
+2. Google on localhost: if you do not have the desktop OAuth JSON, `npm run dev` reuses the live site’s Google token API (`kiddai.netlify.app`). Production is unchanged.
+
+   Optional local file instead:
 
 ```text
 secrets/google-oauth-client.json
 ```
-
-or the desktop app path `src-tauri/secrets/google-oauth-client.json` one folder above this repo.
 
 3. In Settings, click **Connect Google**. The browser redirects to Google and returns to the app.
 
