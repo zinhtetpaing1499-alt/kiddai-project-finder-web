@@ -2774,6 +2774,7 @@ a {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
   padding-top: 8px;
 }
 .customer-view-switch {
@@ -2784,6 +2785,10 @@ a {
   overflow: visible;
   border-radius: 10px;
   background: rgba(84, 73, 63, 0.08);
+}
+.customer-view-switch--stage {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .customer-view-switch__tab {
   position: relative;

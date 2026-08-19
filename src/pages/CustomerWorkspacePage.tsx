@@ -1553,55 +1553,26 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
 
       <section className="customer-list-panel">
         <div className="customer-list-toolbar">
-          <div>
-            <div className="customer-list-toolbar__title-row">
-              {mode === "deposit" ? (
-                <>
-                  <h2>{designer} ·</h2>
-                  <div className="customer-view-switch" role="tablist" aria-label="Deposit lists">
-                    <button
-                      className={`customer-view-switch__tab${depositView === "active" ? " customer-view-switch__tab--active" : ""}`}
-                      type="button"
-                      role="tab"
-                      aria-selected={depositView === "active"}
-                      onClick={() => setDepositView("active")}
-                    >
-                      Deposit & Clearing
-                      {tabNotiBadges(activeListUnreadCount, activeListReminderCount)}
-                    </button>
-                    <button
-                      className={`customer-view-switch__tab${depositView === "waiting" ? " customer-view-switch__tab--active" : ""}`}
-                      type="button"
-                      role="tab"
-                      aria-selected={depositView === "waiting"}
-                      onClick={() => setDepositView("waiting")}
-                    >
-                      Waiting to install
-                      {tabNotiBadges(stageUnreadCounts.waiting.unread, stageUnreadCounts.waiting.reminders)}
-                    </button>
-                    <button
-                      className={`customer-view-switch__tab${depositView === "installing" ? " customer-view-switch__tab--active" : ""}`}
-                      type="button"
-                      role="tab"
-                      aria-selected={depositView === "installing"}
-                      onClick={() => setDepositView("installing")}
-                    >
-                      Installing now
-                      {tabNotiBadges(stageUnreadCounts.installing.unread, stageUnreadCounts.installing.reminders)}
-                    </button>
-                    <button
-                      className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
-                      type="button"
-                      role="tab"
-                      aria-selected={depositView === "finished"}
-                      onClick={() => setDepositView("finished")}
-                    >
-                      Finished
-                      {tabNotiBadges(stageUnreadCounts.finished.unread, stageUnreadCounts.finished.reminders)}
-                    </button>
-                  </div>
-                </>
-              ) : (
+          <div className="customer-list-toolbar__title-row">
+            {mode === "deposit" ? (
+              <>
+                <h2>{designer} ·</h2>
+                <div className="customer-view-switch customer-view-switch--solo" role="tablist" aria-label="Deposit list">
+                  <button
+                    className={`customer-view-switch__tab${depositView === "active" ? " customer-view-switch__tab--active" : ""}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={depositView === "active"}
+                    onClick={() => setDepositView("active")}
+                  >
+                    Deposit & Clearing
+                    {tabNotiBadges(activeListUnreadCount, activeListReminderCount)}
+                  </button>
+                </div>
+                <span className="customer-count">{filteredRecords.length} customers</span>
+              </>
+            ) : (
+              <>
                 <h2>
                   {designer} ·{" "}
                   <span className="customer-list-toolbar__mode">
@@ -1609,10 +1580,44 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     {tabNotiBadges(activeListUnreadCount, activeListReminderCount)}
                   </span>
                 </h2>
-              )}
-              <span className="customer-count">{filteredRecords.length} customers</span>
-            </div>
+                <span className="customer-count">{filteredRecords.length} customers</span>
+              </>
+            )}
           </div>
+          {mode === "deposit" ? (
+            <div className="customer-view-switch customer-view-switch--stage" role="tablist" aria-label="Install lists">
+              <button
+                className={`customer-view-switch__tab${depositView === "waiting" ? " customer-view-switch__tab--active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={depositView === "waiting"}
+                onClick={() => setDepositView("waiting")}
+              >
+                Waiting to install
+                {tabNotiBadges(stageUnreadCounts.waiting.unread, stageUnreadCounts.waiting.reminders)}
+              </button>
+              <button
+                className={`customer-view-switch__tab${depositView === "installing" ? " customer-view-switch__tab--active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={depositView === "installing"}
+                onClick={() => setDepositView("installing")}
+              >
+                Installing now
+                {tabNotiBadges(stageUnreadCounts.installing.unread, stageUnreadCounts.installing.reminders)}
+              </button>
+              <button
+                className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={depositView === "finished"}
+                onClick={() => setDepositView("finished")}
+              >
+                Finished
+                {tabNotiBadges(stageUnreadCounts.finished.unread, stageUnreadCounts.finished.reminders)}
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="customer-search">
