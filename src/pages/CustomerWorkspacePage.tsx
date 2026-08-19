@@ -1,6 +1,5 @@
 import {
   Bell,
-  CheckCircle2,
   ExternalLink,
   FolderOpen,
   LoaderCircle,
@@ -344,18 +343,6 @@ function isPositiveStatus(value: string) {
   return ["yes", "done", "complete", "completed", "ready"].includes(value.trim().toLowerCase());
 }
 
-function formatUpdatedAt(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Saved data";
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
 function getCustomerName(folderName: string, projectNumber: string, fallback: string) {
   const escapedProjectNumber = projectNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const cleanedName = folderName
@@ -464,9 +451,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const [records, setRecords] = useState<CustomerRecord[]>([]);
   const [finishedAll, setFinishedAll] = useState<CustomerRecord[]>([]);
   const [query, setQuery] = useState("");
-  const [fetchedAt, setFetchedAt] = useState("");
   const [isInitialLoading, setIsInitialLoading] = useState(false);
-  const [isBackgroundUpdating, setIsBackgroundUpdating] = useState(false);
   const [loadWarning, setLoadWarning] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
@@ -508,9 +493,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       requestsInFlightRef.current.add(requestKey);
 
       const requestId = ++requestSequenceRef.current;
-      if (background) {
-        setIsBackgroundUpdating(true);
-      } else {
+      if (!background) {
         setIsInitialLoading(true);
       }
       setLoadWarning("");
@@ -542,7 +525,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
 
         writeCache(nextPayload);
         setRecords(nextRecords);
-        setFetchedAt(worksheetRows.fetchedAt);
       } catch (error) {
         if (requestId !== requestSequenceRef.current) {
           return;
@@ -556,7 +538,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         requestsInFlightRef.current.delete(requestKey);
         if (requestId === requestSequenceRef.current) {
           setIsInitialLoading(false);
-          setIsBackgroundUpdating(false);
         }
       }
     },
@@ -578,9 +559,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       requestsInFlightRef.current.add(requestKey);
 
       const requestId = ++requestSequenceRef.current;
-      if (background) {
-        setIsBackgroundUpdating(true);
-      } else {
+      if (!background) {
         setIsInitialLoading(true);
       }
       setLoadWarning("");
@@ -633,7 +612,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
 
         writeFinishedCache(nextPayload);
         setFinishedAll(nextRecords);
-        setFetchedAt(worksheetRows.fetchedAt);
       } catch (error) {
         if (requestId !== requestSequenceRef.current) {
           return;
@@ -647,7 +625,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         requestsInFlightRef.current.delete(requestKey);
         if (requestId === requestSequenceRef.current) {
           setIsInitialLoading(false);
-          setIsBackgroundUpdating(false);
         }
       }
     },
@@ -672,12 +649,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     const cachedValue = readFinishedCache();
     if (cachedValue) {
       setFinishedAll(cachedValue.records);
-      setFetchedAt(cachedValue.fetchedAt);
       setIsInitialLoading(false);
       void loadFinishedDepositStage(true);
     } else {
       setFinishedAll([]);
-      setFetchedAt("");
       void loadFinishedDepositStage(false);
     }
 
@@ -713,12 +688,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     const cachedValue = readCache(mode, designer);
     if (cachedValue) {
       setRecords(cachedValue.records);
-      setFetchedAt(cachedValue.fetchedAt);
       setIsInitialLoading(false);
       void loadDesignerData(true);
     } else {
       setRecords([]);
-      setFetchedAt("");
       void loadDesignerData(false);
     }
 
@@ -1639,20 +1612,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               )}
               <span className="customer-count">{filteredRecords.length} customers</span>
             </div>
-          </div>
-          <div className={`customer-sync${loadWarning ? " customer-sync--warning" : ""}`}>
-            {isBackgroundUpdating ? (
-              <LoaderCircle className="customer-action__spinner" size={15} />
-            ) : (
-              <CheckCircle2 size={15} />
-            )}
-            <span>
-              {isBackgroundUpdating
-                ? "Updating…"
-                : fetchedAt
-                  ? `Updated ${formatUpdatedAt(fetchedAt)}`
-                  : "Waiting for data"}
-            </span>
           </div>
         </div>
 
