@@ -2637,9 +2637,6 @@ a {
   background: rgba(46, 125, 70, 0.12);
   color: #2a6b3c;
 }
-.designer-picker__badge--finished {
-  background: #6d7c59;
-}
 .designer-picker__badge--remind {
   background: #e67a22;
 }

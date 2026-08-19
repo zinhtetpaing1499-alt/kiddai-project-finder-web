@@ -1534,11 +1534,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               designer,
             );
             const reminders = designerReminderCount(mode, designerName, records, designer);
-            const finishedCount =
-              mode === "deposit" && depositView === "finished"
-                ? finishedAll.filter((record) => matchDepositStageOwner(record.owner, designerName))
-                    .length
-                : 0;
             return (
               <button
                 key={designerName}
@@ -1547,11 +1542,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                 onClick={() => setDesigner(designerName)}
               >
                 {designerName}
-                {depositView === "finished" && finishedCount > 0 ? (
-                  <span className="designer-picker__badge designer-picker__badge--finished">
-                    {finishedCount > 9 ? "9+" : finishedCount}
-                  </span>
-                ) : null}
                 {depositView !== "finished" && unread > 0 ? (
                   <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span>
                 ) : null}
@@ -1827,19 +1817,20 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     <td className="customer-table__actions">
                       <div className="customer-actions">
                         {actionButton(record, "open", "Folder", "folder")}
-                        {mode === "deposit" ? (
+                        {mode === "deposit" && depositView !== "finished" ? (
                           <>
                             {actionButton(record, "qc", "QC", "sheet")}
                             {actionButton(record, "queue", "Queue", "folder")}
                             {actionButton(record, "presentation", "Present", "presentation")}
                             {stickerButton(record)}
                           </>
-                        ) : (
+                        ) : null}
+                        {mode === "selling" ? (
                           <>
                             {actionButton(record, "quotation", "Quotation", "sheet")}
                             {actionButton(record, "presentation", "Present", "presentation")}
                           </>
-                        )}
+                        ) : null}
                       </div>
                     </td>
                   </tr>
