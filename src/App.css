@@ -2699,6 +2699,17 @@ a {
   box-shadow: 0 0 0 3px rgba(46, 125, 70, 0.22);
   animation: customer-bell-pulse-line 1.6s ease-in-out infinite;
 }
+.customer-name__bell--remind-off {
+  visibility: hidden;
+  border: 0;
+  padding: 0;
+  color: #e67a22;
+  background: rgba(230, 122, 34, 0.12);
+  cursor: pointer;
+}
+.customer-table tbody tr:hover .customer-name__bell--remind-off {
+  visibility: visible;
+}
 .customer-name__bell--remind {
   visibility: visible;
   border: 0;
@@ -2799,8 +2810,8 @@ a {
   border-bottom: 1px solid var(--border);
 }
 .customer-table { width: 100%; border-collapse: separate; border-spacing: 0; color: var(--text-secondary); font-size: 0.84rem; }
-.customer-table--deposit { min-width: 1640px; }
-.customer-table--selling { min-width: 1160px; }
+.customer-table--deposit { min-width: 1540px; }
+.customer-table--selling { min-width: 1040px; }
 .customer-table th {
   position: sticky;
   top: 0;
@@ -2903,11 +2914,6 @@ a {
   color: #9a6828;
 }
 .customer-action__spinner { animation: customer-spin 0.9s linear infinite; }
-.customer-action--remind-on {
-  border-color: #e67a22;
-  background: #f4e1cc;
-  color: #c45e10;
-}
 @keyframes customer-spin { to { transform: rotate(360deg); } }
 @keyframes customer-busy-pulse {
   0%,

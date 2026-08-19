@@ -1320,23 +1320,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     setReminderRevision((value) => value + 1);
   }
 
-  function remindButton(record: CustomerRecord) {
-    const isOn = hasCustomerCheckReminder(reminderKeyFor(record));
-    return (
-      <button
-        className={`customer-action customer-action--remind${isOn ? " customer-action--remind-on" : ""}`}
-        type="button"
-        onClick={() => toggleReminder(record)}
-        aria-pressed={isOn}
-        data-reminder-revision={reminderRevision}
-        title={isOn ? "Remove check-again reminder" : "Remind me to check this customer again"}
-      >
-        <Bell size={14} />
-        {isOn ? "Reminded" : "Remind"}
-      </button>
-    );
-  }
-
   function stickerButton(record: CustomerRecord) {
     const isBusy = busyActionKey === `${record.id}:sticker`;
     return (
@@ -1515,17 +1498,16 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     </td>
                     <td>
                       <div className="customer-name-row">
-                        {hasRemind ? (
-                          <button
-                            className="customer-name__bell customer-name__bell--on customer-name__bell--remind"
-                            type="button"
-                            onClick={() => toggleReminder(record)}
-                            title="Remove check-again reminder"
-                            aria-label="Remove check-again reminder"
-                          >
-                            <Bell size={14} strokeWidth={2.5} />
-                          </button>
-                        ) : null}
+                        <button
+                          className={`customer-name__bell${hasRemind ? " customer-name__bell--on customer-name__bell--remind" : " customer-name__bell--remind-off"}`}
+                          type="button"
+                          onClick={() => toggleReminder(record)}
+                          title={hasRemind ? "Hide orange reminder" : "Show orange reminder"}
+                          aria-label={hasRemind ? "Hide orange reminder" : "Show orange reminder"}
+                          aria-pressed={hasRemind}
+                        >
+                          <Bell size={14} strokeWidth={2.5} />
+                        </button>
                         <button
                           className={`customer-name${nameUnreadClass}`}
                           type="button"
@@ -1551,11 +1533,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                               className="customer-name__bell customer-name__bell--on"
                               aria-label="New Facebook message"
                             >
-                              <Bell size={14} strokeWidth={2.5} />
-                            </span>
-                          ) : null}
-                          {!hasUnread && !hasRemind ? (
-                            <span className="customer-name__bell" aria-hidden>
                               <Bell size={14} strokeWidth={2.5} />
                             </span>
                           ) : null}
@@ -1603,7 +1580,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             {actionButton(record, "presentation", "Present", "presentation")}
                           </>
                         )}
-                        {remindButton(record)}
                       </div>
                     </td>
                   </tr>
