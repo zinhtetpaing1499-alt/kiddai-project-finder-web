@@ -636,6 +636,10 @@ export async function fetchSpreadsheetMetadata(spreadsheetId: string) {
   return {
     title: payload.properties?.title ?? "Untitled spreadsheet",
     sheetCount: payload.sheets?.length ?? 0,
+    worksheetNames:
+      payload.sheets
+        ?.map((sheet) => sheet.properties?.title?.trim() ?? "")
+        .filter((title) => title.length > 0) ?? [],
   };
 }
 

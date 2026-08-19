@@ -31,6 +31,7 @@ import {
   createProjectSheet,
   createQueueNumberFolders,
   ensureQcSheet,
+  fetchSpreadsheetMetadata,
   fetchWorkflowWorksheetRows,
   findQcDestinationFolders,
   findSellingCustomerFolders,
@@ -65,9 +66,15 @@ import {
   hasCustomerCheckReminder,
   toggleCustomerCheckReminder,
 } from "../utils/customerCheckReminders";
+import {
+  matchDepositStageOwner,
+  parseDepositStageFinished,
+  resolveDepositStageWorksheetName,
+} from "../utils/depositStage";
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
+const FINISHED_CACHE_VERSION = 1;
 const CUSTOMER_AUTO_SYNC_MS = 15_000;
 const MESSAGING_NOTI_POLL_MS = 12_000;
 
@@ -100,6 +107,8 @@ type CustomerRecord = {
   qc: string;
   pieces: string;
   sendCnc: string;
+  owner: string;
+  finishedAt: string;
 };
 
 type CustomerCachePayload = {
@@ -109,6 +118,15 @@ type CustomerCachePayload = {
   fetchedAt: string;
   records: CustomerRecord[];
 };
+
+type FinishedCachePayload = {
+  version: number;
+  fetchedAt: string;
+  worksheetName: string;
+  records: CustomerRecord[];
+};
+
+type DepositListView = "active" | "finished";
 
 type TemplateSpreadsheetIds = Record<CreateSheetKind, string>;
 
@@ -232,6 +250,34 @@ function writeCache(payload: CustomerCachePayload) {
   }
 }
 
+function finishedCacheKey() {
+  return `kiddai.depositStageFinished.${FINISHED_CACHE_VERSION}`;
+}
+
+function readFinishedCache(): FinishedCachePayload | null {
+  try {
+    const rawValue = window.localStorage.getItem(finishedCacheKey());
+    if (!rawValue) {
+      return null;
+    }
+    const parsed = JSON.parse(rawValue) as FinishedCachePayload;
+    if (parsed.version !== FINISHED_CACHE_VERSION || !Array.isArray(parsed.records)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeFinishedCache(payload: FinishedCachePayload) {
+  try {
+    window.localStorage.setItem(finishedCacheKey(), JSON.stringify(payload));
+  } catch (error) {
+    console.error("Unable to save the finished-customer cache.", error);
+  }
+}
+
 function getCell(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
   return rows[rowIndex]?.[columnIndex] ?? { text: "", formula: null, links: [] };
 }
@@ -276,6 +322,8 @@ function parseDesignerCustomers(rows: WorkflowCell[][], mode: CustomerMode) {
       qc: mode === "deposit" ? getCellText(rows, rowIndex, 14) : "",
       pieces: mode === "deposit" ? getCellText(rows, rowIndex, 15) : "",
       sendCnc: mode === "deposit" ? getCellText(rows, rowIndex, 16) : "",
+      owner: "",
+      finishedAt: "",
     });
   }
 
@@ -404,7 +452,9 @@ function designerReminderCount(
 export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const { connection, refreshGoogleConnection } = useGoogleConnection();
   const [designer, setDesigner] = useState<DesignerName>("Tod");
+  const [depositView, setDepositView] = useState<DepositListView>("active");
   const [records, setRecords] = useState<CustomerRecord[]>([]);
+  const [finishedAll, setFinishedAll] = useState<CustomerRecord[]>([]);
   const [query, setQuery] = useState("");
   const [fetchedAt, setFetchedAt] = useState("");
   const [isInitialLoading, setIsInitialLoading] = useState(false);
@@ -505,7 +555,135 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     [connection.status, designer, mode, refreshGoogleConnection],
   );
 
+  const loadFinishedDepositStage = useCallback(
+    async (background: boolean) => {
+      const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+      if (!spreadsheetId) {
+        setLoadWarning("Save the Workflow Google Sheet in Settings first.");
+        return;
+      }
+
+      const requestKey = "deposit:finished:stage";
+      if (requestsInFlightRef.current.has(requestKey)) {
+        return;
+      }
+      requestsInFlightRef.current.add(requestKey);
+
+      const requestId = ++requestSequenceRef.current;
+      if (background) {
+        setIsBackgroundUpdating(true);
+      } else {
+        setIsInitialLoading(true);
+      }
+      setLoadWarning("");
+
+      try {
+        if (connection.status !== "Connected") {
+          const restoreResponse = await refreshGoogleConnection();
+          if (restoreResponse.errorMessage) {
+            throw new Error(restoreResponse.errorMessage);
+          }
+          if (!restoreResponse.connection || restoreResponse.connection.status !== "Connected") {
+            throw new Error("Connect Google in Settings before loading customer data.");
+          }
+        }
+
+        const metadata = await fetchSpreadsheetMetadata(spreadsheetId);
+        const worksheetName = resolveDepositStageWorksheetName(metadata.worksheetNames);
+        if (!worksheetName) {
+          throw new Error(
+            `Could not find the “Deposit Stage” tab in ${metadata.title}. Add that sheet or check the tab name.`,
+          );
+        }
+
+        const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, worksheetName);
+        const nextRecords = parseDepositStageFinished(worksheetRows.rows, worksheetName);
+        const nextPayload: FinishedCachePayload = {
+          version: FINISHED_CACHE_VERSION,
+          fetchedAt: worksheetRows.fetchedAt,
+          worksheetName,
+          records: nextRecords,
+        };
+
+        if (requestId !== requestSequenceRef.current) {
+          return;
+        }
+
+        writeFinishedCache(nextPayload);
+        setFinishedAll(nextRecords);
+        setFetchedAt(worksheetRows.fetchedAt);
+      } catch (error) {
+        if (requestId !== requestSequenceRef.current) {
+          return;
+        }
+        setLoadWarning(
+          (readFinishedCache()?.records.length ?? 0) > 0
+            ? "Live update delayed. Showing saved finished customers and retrying automatically."
+            : getErrorMessage(error),
+        );
+      } finally {
+        requestsInFlightRef.current.delete(requestKey);
+        if (requestId === requestSequenceRef.current) {
+          setIsInitialLoading(false);
+          setIsBackgroundUpdating(false);
+        }
+      }
+    },
+    [connection.status, refreshGoogleConnection],
+  );
+
   useEffect(() => {
+    if (mode !== "deposit") {
+      setDepositView("active");
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    if (!(mode === "deposit" && depositView === "finished")) {
+      return;
+    }
+
+    requestSequenceRef.current += 1;
+    setQuery("");
+    setActionMessage("");
+    setActionError("");
+    const cachedValue = readFinishedCache();
+    if (cachedValue) {
+      setFinishedAll(cachedValue.records);
+      setFetchedAt(cachedValue.fetchedAt);
+      setIsInitialLoading(false);
+      void loadFinishedDepositStage(true);
+    } else {
+      setFinishedAll([]);
+      setFetchedAt("");
+      void loadFinishedDepositStage(false);
+    }
+
+    const timer = window.setInterval(() => {
+      void loadFinishedDepositStage(true);
+    }, CUSTOMER_AUTO_SYNC_MS);
+    const refreshWhenActive = () => {
+      if (document.visibilityState === "visible") {
+        void loadFinishedDepositStage(true);
+      }
+    };
+    window.addEventListener("focus", refreshWhenActive);
+    window.addEventListener("online", refreshWhenActive);
+    document.addEventListener("visibilitychange", refreshWhenActive);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenActive);
+      window.removeEventListener("online", refreshWhenActive);
+      document.removeEventListener("visibilitychange", refreshWhenActive);
+      requestSequenceRef.current += 1;
+    };
+  }, [depositView, loadFinishedDepositStage, mode]);
+
+  useEffect(() => {
+    if (mode === "deposit" && depositView === "finished") {
+      return;
+    }
     requestSequenceRef.current += 1;
     setQuery("");
     setActionMessage("");
@@ -541,7 +719,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       document.removeEventListener("visibilitychange", refreshWhenActive);
       requestSequenceRef.current += 1;
     };
-  }, [designer, loadDesignerData, mode]);
+  }, [depositView, designer, loadDesignerData, mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -585,38 +763,45 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     [facebookNotifications, lineNotifications],
   );
 
+  const sourceRecords = useMemo(() => {
+    if (mode === "deposit" && depositView === "finished") {
+      return finishedAll.filter((record) => matchDepositStageOwner(record.owner, designer));
+    }
+    return records;
+  }, [depositView, designer, finishedAll, mode, records]);
+
   const filteredRecords = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) {
-      return records;
+      return sourceRecords;
     }
-    return records.filter((record) =>
+    return sourceRecords.filter((record) =>
       `${record.projectNumber} ${record.customerName}`.toLowerCase().includes(normalizedQuery),
     );
-  }, [query, records]);
+  }, [query, sourceRecords]);
 
   const matchedUnreadCount = useMemo(
-    () => countDistinctCustomersWithUnread(records, messagingNotifications),
-    [messagingNotifications, records],
+    () => countDistinctCustomersWithUnread(sourceRecords, messagingNotifications),
+    [messagingNotifications, sourceRecords],
   );
 
   const matchedReminderCount = useMemo(() => {
-    const keys = records.map((record) =>
+    const keys = sourceRecords.map((record) =>
       customerReminderKey(mode, designer, record.projectNumber, record.customerName),
     );
     return reminderRevision >= 0 ? countCustomerCheckReminders(keys) : 0;
-  }, [records, reminderRevision, designer, mode]);
+  }, [sourceRecords, reminderRevision, designer, mode]);
 
   const matchedUnreadHasLine = useMemo(
     () =>
-      records.some((record) =>
+      sourceRecords.some((record) =>
         messagingNotifications.some(
           (item) =>
             item.source === "line" &&
             notificationAppliesToCustomer(item.senderName, record.customerName, item.source),
         ),
       ),
-    [messagingNotifications, records],
+    [messagingNotifications, sourceRecords],
   );
 
   async function resolveTemplateSpreadsheetIds() {
@@ -1349,6 +1534,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               designer,
             );
             const reminders = designerReminderCount(mode, designerName, records, designer);
+            const finishedCount =
+              mode === "deposit" && depositView === "finished"
+                ? finishedAll.filter((record) => matchDepositStageOwner(record.owner, designerName))
+                    .length
+                : 0;
             return (
               <button
                 key={designerName}
@@ -1357,8 +1547,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                 onClick={() => setDesigner(designerName)}
               >
                 {designerName}
-                {unread > 0 ? <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span> : null}
-                {reminders > 0 ? (
+                {depositView === "finished" && finishedCount > 0 ? (
+                  <span className="designer-picker__badge designer-picker__badge--finished">
+                    {finishedCount > 9 ? "9+" : finishedCount}
+                  </span>
+                ) : null}
+                {depositView !== "finished" && unread > 0 ? (
+                  <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span>
+                ) : null}
+                {depositView !== "finished" && reminders > 0 ? (
                   <span className="designer-picker__badge designer-picker__badge--remind">
                     {reminders > 9 ? "9+" : reminders}
                   </span>
@@ -1373,9 +1570,33 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         <div className="customer-list-toolbar">
           <div>
             <div className="customer-list-toolbar__title-row">
-              <h2>
-                {designer} · {mode === "deposit" ? "Deposit & Clearing" : "Selling"}
-              </h2>
+              {mode === "deposit" ? (
+                <>
+                  <h2>{designer} ·</h2>
+                  <div className="customer-view-switch" role="tablist" aria-label="Deposit lists">
+                    <button
+                      className={`customer-view-switch__tab${depositView === "active" ? " customer-view-switch__tab--active" : ""}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={depositView === "active"}
+                      onClick={() => setDepositView("active")}
+                    >
+                      Deposit & Clearing
+                    </button>
+                    <button
+                      className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={depositView === "finished"}
+                      onClick={() => setDepositView("finished")}
+                    >
+                      Finished
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <h2>{designer} · Selling</h2>
+              )}
               <span className="customer-count">{filteredRecords.length} customers</span>
               {matchedUnreadCount > 0 ? (
                 <span
@@ -1429,19 +1650,32 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         {actionMessage ? <div className="customer-notice customer-notice--success">{actionMessage}</div> : null}
         {actionError ? <div className="customer-notice customer-notice--error">{actionError}</div> : null}
 
-        {isInitialLoading && records.length === 0 ? (
+        {isInitialLoading &&
+        (depositView === "finished" ? finishedAll.length === 0 : records.length === 0) ? (
           <div className="customer-empty-state">
             <LoaderCircle className="customer-action__spinner" size={28} />
-            <strong>Loading {designer} customer data</strong>
+            <strong>
+              {depositView === "finished"
+                ? "Loading finished customers from Deposit Stage"
+                : `Loading ${designer} customer data`}
+            </strong>
             <span>The list will be saved locally after this first load.</span>
           </div>
         ) : filteredRecords.length === 0 ? (
           <div className="customer-empty-state">
-            <strong>{query ? "No customers match this search" : "No customer rows found"}</strong>
+            <strong>
+              {query
+                ? "No customers match this search"
+                : depositView === "finished"
+                  ? `No finished customers for ${designer}`
+                  : "No customer rows found"}
+            </strong>
             <span>
               {query
                 ? "Try a different project number or customer name."
-                : `Check the ${designer} worksheet layout in Settings.`}
+                : depositView === "finished"
+                  ? "Finished list uses the Deposit Stage tab. Only rows with a Finished date and this owner name are shown."
+                  : `Check the ${designer} worksheet layout in Settings.`}
             </span>
           </div>
         ) : (
@@ -1454,6 +1688,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   <th>{mode === "selling" ? "Estimate Price" : "Amount"}</th>
                   <th>{mode === "selling" ? "Measurement" : "Deadline"}</th>
                   <th>Installation</th>
+                  {mode === "deposit" && depositView === "finished" ? <th>Finished</th> : null}
                   {mode === "deposit" ? (
                     <>
                       <th>Wood Color</th>
@@ -1566,6 +1801,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     <td className="customer-table__amount">{statusLabel(record.amount)}</td>
                     <td>{statusLabel(record.deadline)}</td>
                     <td>{statusLabel(record.installation)}</td>
+                    {mode === "deposit" && depositView === "finished" ? (
+                      <td>{statusLabel(record.finishedAt)}</td>
+                    ) : null}
                     {mode === "deposit" ? (
                       <>
                         {[
