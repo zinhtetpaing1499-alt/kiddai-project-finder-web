@@ -38,7 +38,7 @@ export type DepositStageRecord = {
 };
 
 function getCell(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
-  return rows[rowIndex]?.[columnIndex] ?? { text: "", formula: null, links: [] };
+  return rows[rowIndex]?.[columnIndex] ?? { text: "", formula: null, links: [], fill: null };
 }
 
 function getCellText(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
@@ -47,6 +47,42 @@ function getCellText(rows: WorkflowCell[][], rowIndex: number, columnIndex: numb
 
 function getCellUrl(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
   return getCell(rows, rowIndex, columnIndex).links[0]?.url?.trim() ?? "";
+}
+
+function classifyFill(fill: WorkflowCell["fill"]): "green" | "yellow" | "other" {
+  if (!fill) {
+    return "other";
+  }
+  const red = fill.red;
+  const green = fill.green;
+  const blue = fill.blue;
+  const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+  if (chroma < 0.04) {
+    return "other";
+  }
+  if (green - red >= 0.03 && green > blue) {
+    return "green";
+  }
+  if (red >= 0.82 && green >= 0.78 && red + 0.02 >= green && blue < 0.92) {
+    return "yellow";
+  }
+  return "other";
+}
+
+function isGreenDepositStageRow(row: WorkflowCell[]) {
+  const samples = row.slice(1, 14);
+  let greenVotes = 0;
+  let yellowVotes = 0;
+  for (const cell of samples) {
+    const kind = classifyFill(cell.fill);
+    if (kind === "green") {
+      greenVotes += 1;
+    }
+    if (kind === "yellow") {
+      yellowVotes += 1;
+    }
+  }
+  return greenVotes > 0 && greenVotes >= yellowVotes;
 }
 
 function isProjectNumber(value: string) {
@@ -147,6 +183,9 @@ export function parseDepositStageFinished(
     const finishedAt = getCellText(rows, rowIndex, finishedColumn);
 
     if (!isProjectNumber(projectNumber) || !customerName || !owner) {
+      continue;
+    }
+    if (!isGreenDepositStageRow(rows[rowIndex] ?? [])) {
       continue;
     }
 

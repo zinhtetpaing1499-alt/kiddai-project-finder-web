@@ -74,7 +74,7 @@ import {
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
-const FINISHED_CACHE_VERSION = 2;
+const FINISHED_CACHE_VERSION = 3;
 const CUSTOMER_AUTO_SYNC_MS = 15_000;
 const MESSAGING_NOTI_POLL_MS = 12_000;
 
@@ -279,7 +279,7 @@ function writeFinishedCache(payload: FinishedCachePayload) {
 }
 
 function getCell(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
-  return rows[rowIndex]?.[columnIndex] ?? { text: "", formula: null, links: [] };
+  return rows[rowIndex]?.[columnIndex] ?? { text: "", formula: null, links: [], fill: null };
 }
 
 function getCellText(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
@@ -1674,7 +1674,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               {query
                 ? "Try a different project number or customer name."
                 : depositView === "finished"
-                  ? "Deposit Stage rows for this owner, including jobs sent to CNC that are not installed yet."
+                  ? "Green Deposit Stage rows for this owner only. Yellow rows are not included."
                   : `Check the ${designer} worksheet layout in Settings.`}
             </span>
           </div>
