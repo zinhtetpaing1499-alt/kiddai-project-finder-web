@@ -1,5 +1,6 @@
 import { CheckCircle2, Cloud, FolderSearch, Sheet } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   DEFAULT_WORKFLOW_GOOGLE_SHEET_URL,
   KIDDAI2_FOLDER_ID_KEY,
@@ -32,7 +33,9 @@ function saveWorkflowSheetUrl(rawUrl: string) {
 }
 
 export function SettingsPage() {
+  const location = useLocation();
   const { connection, errorMessage, isBusy, connectGoogle, disconnectGoogle } = useGoogleConnection();
+  const [callbackError, setCallbackError] = useState("");
   const [workflowGoogleSheetUrl, setWorkflowGoogleSheetUrl] = useState("");
   const [sharedDrives, setSharedDrives] = useState<SharedDriveInfo[]>([]);
   const [sellingRoutes, setSellingRoutes] = useState<SellingDesignerRoute[]>([]);
@@ -42,6 +45,16 @@ export function SettingsPage() {
   const [errorText, setErrorText] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
   const sheetSaveTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const fromCallback =
+      location.state && typeof location.state === "object" && "googleError" in location.state
+        ? String((location.state as { googleError?: unknown }).googleError ?? "")
+        : "";
+    if (fromCallback) {
+      setCallbackError(fromCallback);
+    }
+  }, [location.state]);
 
   useEffect(() => {
     const savedWorkflowSheetUrl = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_URL_KEY);
@@ -336,7 +349,9 @@ export function SettingsPage() {
         </section>
       </section>
 
-      {errorMessage || errorText ? <p className="panel__text">{errorMessage || errorText}</p> : null}
+      {errorMessage || errorText || callbackError ? (
+        <p className="panel__text">{errorMessage || errorText || callbackError}</p>
+      ) : null}
       {statusMessage ? (
         <div className="settings-success" role="status" aria-live="polite">
           <CheckCircle2 size={14} strokeWidth={2.2} />
