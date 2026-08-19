@@ -2785,11 +2785,11 @@ a {
 .customer-view-switch__notis {
   position: absolute;
   top: -7px;
-  left: 50%;
+  left: auto;
+  right: 1px;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  transform: translateX(-50%);
   pointer-events: none;
 }
 .customer-view-switch__noti {
@@ -2813,6 +2813,7 @@ a {
   position: relative;
   display: inline-block;
   padding-top: 2px;
+  padding-right: 10px;
 }
 .customer-list-toolbar h2 { margin: 0; color: var(--text-primary); font-size: 0.98rem; letter-spacing: -0.02em; }
 .customer-list-toolbar p { margin: 4px 0 0; color: var(--text-muted); font-size: 0.84rem; }
