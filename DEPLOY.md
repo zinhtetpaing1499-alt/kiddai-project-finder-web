@@ -1,6 +1,27 @@
 # Deploy checklist (Netlify)
 
-## Folder to deploy
+## Folder to drag into Netlify
+
+After `npm run build`, drag this folder onto Netlify:
+
+```text
+kiddai-netlify-dist
+```
+
+That folder is a copy of `dist` (the built site).
+
+**Important:** Drag-and-drop does **not** upload Google / LINE / Facebook Netlify Functions. If you drop only this folder onto the live site, **Connect Google can break**.
+
+To update https://kiddai.netlify.app and keep Google Connect working, use one of these:
+
+1. **Best:** merge this GitHub branch and let Netlify build from Git (keeps `netlify/functions`).
+2. **CLI:** from the repo root, with the site already linked:
+
+```bash
+npx netlify deploy --prod --dir=dist --functions=netlify/functions
+```
+
+## Netlify settings (Git deploy)
 
 This GitHub repo (`kiddai-project-finder-web`) deploys from the **repo root**. Leave Base directory empty.
 
@@ -14,7 +35,7 @@ If this code still lives as `kiddai-project-finder/web` inside the desktop app, 
 - Publish directory: `dist`
 - Functions directory: `netlify/functions`
 
-`netlify.toml` inside `web/` already sets these.
+`netlify.toml` already sets these.
 
 ## Environment variables (Site settings → Environment variables)
 

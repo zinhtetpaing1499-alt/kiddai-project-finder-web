@@ -274,8 +274,8 @@ function buildWorkflowRows(payload: SheetGridResponse): WorkflowCell[][] {
   );
 }
 
-async function googleFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const accessToken = await getValidAccessToken();
+async function googleFetch<T>(url: string, init?: RequestInit, retried = false): Promise<T> {
+  const accessToken = await getValidAccessToken(retried);
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -288,6 +288,10 @@ async function googleFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as T & {
     error?: { message?: string; status?: string };
   };
+
+  if (response.status === 401 && !retried) {
+    return googleFetch<T>(url, init, true);
+  }
 
   if (!response.ok) {
     throw new Error(payload.error?.message || `Google API request failed (${response.status}).`);

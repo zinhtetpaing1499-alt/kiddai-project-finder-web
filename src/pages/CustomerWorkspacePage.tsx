@@ -76,8 +76,8 @@ import {
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
 const FINISHED_CACHE_VERSION = 3;
-const CUSTOMER_AUTO_SYNC_MS = 15_000;
-const MESSAGING_NOTI_POLL_MS = 12_000;
+const CUSTOMER_AUTO_SYNC_MS = 4_000;
+const MESSAGING_NOTI_POLL_MS = 4_000;
 
 /** Shared shape for FB + LINE unread matching / bell UI. */
 type MessagingNotification = {
@@ -596,15 +596,29 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
           }
         }
 
-        const metadata = await fetchSpreadsheetMetadata(spreadsheetId);
-        const worksheetName = resolveDepositStageWorksheetName(metadata.worksheetNames);
+        let worksheetName = readFinishedCache()?.worksheetName?.trim() ?? "";
+        if (!worksheetName) {
+          const metadata = await fetchSpreadsheetMetadata(spreadsheetId);
+          worksheetName = resolveDepositStageWorksheetName(metadata.worksheetNames) ?? "";
+        }
         if (!worksheetName) {
           throw new Error(
-            `Could not find the “Deposit Stage” tab in ${metadata.title}. Add that sheet or check the tab name.`,
+            "Could not find the “Deposit Stage” tab. Add that sheet or check the tab name.",
           );
         }
 
-        const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, worksheetName);
+        let worksheetRows;
+        try {
+          worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, worksheetName);
+        } catch (error) {
+          const metadata = await fetchSpreadsheetMetadata(spreadsheetId);
+          const resolvedName = resolveDepositStageWorksheetName(metadata.worksheetNames);
+          if (!resolvedName || resolvedName === worksheetName) {
+            throw error;
+          }
+          worksheetName = resolvedName;
+          worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, worksheetName);
+        }
         const nextRecords = parseDepositStageFinished(worksheetRows.rows, worksheetName);
         const nextPayload: FinishedCachePayload = {
           version: FINISHED_CACHE_VERSION,
