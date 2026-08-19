@@ -126,7 +126,15 @@ type FinishedCachePayload = {
   records: CustomerRecord[];
 };
 
-type DepositListView = "active" | "finished";
+type DepositListView = "active" | "finished" | "installPending";
+
+function isDepositStageView(view: DepositListView) {
+  return view === "finished" || view === "installPending";
+}
+
+function hasFinishedDate(value: string) {
+  return value.trim().length > 0;
+}
 
 type TemplateSpreadsheetIds = Record<CreateSheetKind, string>;
 
@@ -639,7 +647,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }, [mode]);
 
   useEffect(() => {
-    if (!(mode === "deposit" && depositView === "finished")) {
+    if (!(mode === "deposit" && isDepositStageView(depositView))) {
       return;
     }
 
@@ -681,7 +689,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }, [depositView, loadFinishedDepositStage, mode]);
 
   useEffect(() => {
-    if (mode === "deposit" && depositView === "finished") {
+    if (mode === "deposit" && isDepositStageView(depositView)) {
       return;
     }
     requestSequenceRef.current += 1;
@@ -764,8 +772,12 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   );
 
   const sourceRecords = useMemo(() => {
-    if (mode === "deposit" && depositView === "finished") {
-      return finishedAll.filter((record) => matchDepositStageOwner(record.owner, designer));
+    if (mode === "deposit" && isDepositStageView(depositView)) {
+      const owned = finishedAll.filter((record) => matchDepositStageOwner(record.owner, designer));
+      if (depositView === "finished") {
+        return owned.filter((record) => hasFinishedDate(record.finishedAt));
+      }
+      return owned.filter((record) => !hasFinishedDate(record.finishedAt));
     }
     return records;
   }, [depositView, designer, finishedAll, mode, records]);
@@ -1542,10 +1554,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                 onClick={() => setDesigner(designerName)}
               >
                 {designerName}
-                {depositView !== "finished" && unread > 0 ? (
+                {depositView === "active" && unread > 0 ? (
                   <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span>
                 ) : null}
-                {depositView !== "finished" && reminders > 0 ? (
+                {depositView === "active" && reminders > 0 ? (
                   <span className="designer-picker__badge designer-picker__badge--remind">
                     {reminders > 9 ? "9+" : reminders}
                   </span>
@@ -1581,6 +1593,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("finished")}
                     >
                       Finished
+                    </button>
+                    <button
+                      className={`customer-view-switch__tab${depositView === "installPending" ? " customer-view-switch__tab--active" : ""}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={depositView === "installPending"}
+                      onClick={() => setDepositView("installPending")}
+                    >
+                      Installation pending
                     </button>
                   </div>
                 </>
@@ -1641,12 +1662,12 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         {actionError ? <div className="customer-notice customer-notice--error">{actionError}</div> : null}
 
         {isInitialLoading &&
-        (depositView === "finished" ? finishedAll.length === 0 : records.length === 0) ? (
+        (isDepositStageView(depositView) ? finishedAll.length === 0 : records.length === 0) ? (
           <div className="customer-empty-state">
             <LoaderCircle className="customer-action__spinner" size={28} />
             <strong>
-              {depositView === "finished"
-                ? "Loading finished customers from Deposit Stage"
+              {isDepositStageView(depositView)
+                ? "Loading customers from Deposit Stage"
                 : `Loading ${designer} customer data`}
             </strong>
             <span>The list will be saved locally after this first load.</span>
@@ -1658,14 +1679,18 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                 ? "No customers match this search"
                 : depositView === "finished"
                   ? `No finished customers for ${designer}`
-                  : "No customer rows found"}
+                  : depositView === "installPending"
+                    ? `No installation-pending customers for ${designer}`
+                    : "No customer rows found"}
             </strong>
             <span>
               {query
                 ? "Try a different project number or customer name."
                 : depositView === "finished"
-                  ? "Green Deposit Stage rows for this owner only. Yellow rows are not included."
-                  : `Check the ${designer} worksheet layout in Settings.`}
+                  ? "Green Deposit Stage rows with a Finished date, for this owner. Yellow rows are not included."
+                  : depositView === "installPending"
+                    ? "Green Deposit Stage rows with no Finished date yet, for this owner."
+                    : `Check the ${designer} worksheet layout in Settings.`}
             </span>
           </div>
         ) : (
@@ -1817,7 +1842,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     <td className="customer-table__actions">
                       <div className="customer-actions">
                         {actionButton(record, "open", "Folder", "folder")}
-                        {mode === "deposit" && depositView !== "finished" ? (
+                        {mode === "deposit" && depositView === "active" ? (
                           <>
                             {actionButton(record, "qc", "QC", "sheet")}
                             {actionButton(record, "queue", "Queue", "folder")}
