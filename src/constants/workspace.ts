@@ -7,7 +7,6 @@ export type WorkspaceRoute = {
   icon: LucideIcon;
   title: string;
   subtitle: string;
-  tone?: "deposit" | "selling";
 };
 
 export const workspaceRoutes: WorkspaceRoute[] = [
@@ -17,7 +16,6 @@ export const workspaceRoutes: WorkspaceRoute[] = [
     icon: CircleDollarSign,
     title: "Deposit Customers",
     subtitle: "Choose a designer, review deposit and clearing progress, and create project files.",
-    tone: "deposit",
   },
   {
     label: "Selling Customers",
@@ -25,7 +23,6 @@ export const workspaceRoutes: WorkspaceRoute[] = [
     icon: BadgeDollarSign,
     title: "Selling Customers",
     subtitle: "Choose a designer, review the live selling list, and create quotation or presentation files.",
-    tone: "selling",
   },
   {
     label: "Settings",

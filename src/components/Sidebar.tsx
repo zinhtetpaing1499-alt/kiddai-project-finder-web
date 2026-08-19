@@ -33,23 +33,17 @@ export function Sidebar({ onNavigate, onCollapse }: SidebarProps) {
 
         <div className="sidebar-section">
           <nav className="sidebar-nav" aria-label="Primary">
-            {workspaceRoutes.map(({ label, to, icon: Icon, tone }) => (
+            {workspaceRoutes.map(({ label, to, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}
                 onClick={() => onNavigate?.()}
                 className={({ isActive }) =>
-                  [
-                    "sidebar-nav__item",
-                    tone ? `sidebar-nav__item--${tone}` : "",
-                    isActive ? "sidebar-nav__item--active" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")
+                  `sidebar-nav__item${isActive ? " sidebar-nav__item--active" : ""}`
                 }
               >
                 <span className="sidebar-nav__icon">
-                  <Icon size={20} strokeWidth={2.4} />
+                  <Icon size={16} strokeWidth={2} />
                 </span>
                 <span className="sidebar-nav__label">{label}</span>
               </NavLink>
