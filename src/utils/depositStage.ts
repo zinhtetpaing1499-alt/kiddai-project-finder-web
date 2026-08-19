@@ -14,6 +14,7 @@ const FALLBACK_COLUMNS = {
   queueNumber: 10,
   qc: 11,
   pieces: 12,
+  sendCnc: 7,
   finished: 13,
 };
 
@@ -70,10 +71,9 @@ function findHeaderRow(rows: WorkflowCell[][]) {
     const joined = (rows[rowIndex] ?? [])
       .map((cell) => cell.text.trim().toLocaleLowerCase())
       .join(" | ");
-    const hasFinished = joined.includes("finished") || joined.includes("เสร็จ");
     const hasOwner = joined.includes("owner") || joined.includes("ช่าง");
     const hasName = joined.includes("name") || joined.includes("ชื่อ");
-    if (hasFinished && (hasOwner || hasName)) {
+    if (hasOwner && hasName) {
       return rowIndex;
     }
   }
@@ -115,6 +115,8 @@ export function parseDepositStageFinished(
     qc: headerRow >= 0 ? findColumn(rows, headerRow, ["qc"]) : -1,
     pieces:
       headerRow >= 0 ? findColumn(rows, headerRow, ["pieces", "จำนวน"]) : -1,
+    sendCnc:
+      headerRow >= 0 ? findColumn(rows, headerRow, ["cnc", "ส่งพวง", "พวงไม้"]) : -1,
     finished:
       headerRow >= 0 ? findColumn(rows, headerRow, ["finished", "เสร็จ"]) : -1,
   };
@@ -132,6 +134,7 @@ export function parseDepositStageFinished(
   const queueColumn = columns.queueNumber >= 0 ? columns.queueNumber : FALLBACK_COLUMNS.queueNumber;
   const qcColumn = columns.qc >= 0 ? columns.qc : FALLBACK_COLUMNS.qc;
   const piecesColumn = columns.pieces >= 0 ? columns.pieces : FALLBACK_COLUMNS.pieces;
+  const sendCncColumn = columns.sendCnc >= 0 ? columns.sendCnc : FALLBACK_COLUMNS.sendCnc;
   const finishedColumn = columns.finished >= 0 ? columns.finished : FALLBACK_COLUMNS.finished;
 
   const startRow = headerRow >= 0 ? headerRow + 1 : 0;
@@ -143,7 +146,7 @@ export function parseDepositStageFinished(
     const owner = getCellText(rows, rowIndex, ownerColumn);
     const finishedAt = getCellText(rows, rowIndex, finishedColumn);
 
-    if (!isProjectNumber(projectNumber) || !customerName || !owner || !finishedAt) {
+    if (!isProjectNumber(projectNumber) || !customerName || !owner) {
       continue;
     }
 
@@ -162,7 +165,7 @@ export function parseDepositStageFinished(
       queueNumber: getCellText(rows, rowIndex, queueColumn),
       qc: getCellText(rows, rowIndex, qcColumn),
       pieces: getCellText(rows, rowIndex, piecesColumn),
-      sendCnc: "",
+      sendCnc: getCellText(rows, rowIndex, sendCncColumn),
       finishedAt,
     });
   }

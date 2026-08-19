@@ -74,7 +74,7 @@ import {
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
-const FINISHED_CACHE_VERSION = 1;
+const FINISHED_CACHE_VERSION = 2;
 const CUSTOMER_AUTO_SYNC_MS = 15_000;
 const MESSAGING_NOTI_POLL_MS = 12_000;
 
@@ -1674,7 +1674,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               {query
                 ? "Try a different project number or customer name."
                 : depositView === "finished"
-                  ? "Finished list uses the Deposit Stage tab. Only rows with a Finished date and this owner name are shown."
+                  ? "Deposit Stage rows for this owner, including jobs sent to CNC that are not installed yet."
                   : `Check the ${designer} worksheet layout in Settings.`}
             </span>
           </div>
