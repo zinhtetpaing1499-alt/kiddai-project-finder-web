@@ -67,6 +67,7 @@ import {
   toggleCustomerCheckReminder,
 } from "../utils/customerCheckReminders";
 import {
+  isInstallStillPending,
   matchDepositStageOwner,
   parseDepositStageFinished,
   resolveDepositStageWorksheetName,
@@ -130,10 +131,6 @@ type DepositListView = "active" | "finished" | "installPending";
 
 function isDepositStageView(view: DepositListView) {
   return view === "finished" || view === "installPending";
-}
-
-function hasFinishedDate(value: string) {
-  return value.trim().length > 0;
 }
 
 type TemplateSpreadsheetIds = Record<CreateSheetKind, string>;
@@ -774,10 +771,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const sourceRecords = useMemo(() => {
     if (mode === "deposit" && isDepositStageView(depositView)) {
       const owned = finishedAll.filter((record) => matchDepositStageOwner(record.owner, designer));
-      if (depositView === "finished") {
-        return owned.filter((record) => hasFinishedDate(record.finishedAt));
+      if (depositView === "installPending") {
+        return owned.filter((record) => isInstallStillPending(record.installation));
       }
-      return owned.filter((record) => !hasFinishedDate(record.finishedAt));
+      return owned.filter((record) => !isInstallStillPending(record.installation));
     }
     return records;
   }, [depositView, designer, finishedAll, mode, records]);
@@ -1687,9 +1684,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               {query
                 ? "Try a different project number or customer name."
                 : depositView === "finished"
-                  ? "Green Deposit Stage rows with a Finished date, for this owner. Yellow rows are not included."
+                  ? "Green Deposit Stage rows for this owner whose Install date is today or already past."
                   : depositView === "installPending"
-                    ? "Green Deposit Stage rows with no Finished date yet, for this owner."
+                    ? "Green Deposit Stage rows for this owner whose Install date is still in the future."
                     : `Check the ${designer} worksheet layout in Settings.`}
             </span>
           </div>

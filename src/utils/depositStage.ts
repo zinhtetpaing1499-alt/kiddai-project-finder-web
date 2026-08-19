@@ -215,3 +215,41 @@ export function parseDepositStageFinished(
 export function matchDepositStageOwner(owner: string, designerName: string) {
   return owner.trim().toLocaleLowerCase() === designerName.trim().toLocaleLowerCase();
 }
+
+export function parseDepositStageDate(value: string) {
+  const match = value.trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/u);
+  if (!match) {
+    return null;
+  }
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  let year = Number(match[3]);
+  if (year < 100) {
+    year += 2000;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+  const parsed = new Date(year, month - 1, day);
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+function startOfLocalDay(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+}
+
+/** Install date is still in the future, so the job is not installed yet. */
+export function isInstallStillPending(installation: string, now = new Date()) {
+  const installAt = parseDepositStageDate(installation);
+  if (!installAt) {
+    return false;
+  }
+  return startOfLocalDay(installAt) > startOfLocalDay(now);
+}
