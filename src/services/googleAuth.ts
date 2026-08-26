@@ -149,12 +149,44 @@ export async function connectGoogleAccount(): Promise<GoogleConnectionState> {
   return await new Promise<GoogleConnectionState>(() => undefined);
 }
 
+type GoogleCallbackInFlight = {
+  code: string;
+  state: string | null;
+  promise: Promise<GoogleConnectionState>;
+};
+
+let googleCallbackInFlight: GoogleCallbackInFlight | null = null;
+
 export async function completeGoogleConnectFromCallback(code: string, state: string | null) {
+  if (
+    googleCallbackInFlight &&
+    googleCallbackInFlight.code === code &&
+    googleCallbackInFlight.state === state
+  ) {
+    return googleCallbackInFlight.promise;
+  }
+
+  const callback: GoogleCallbackInFlight = {
+    code,
+    state,
+    promise: finishGoogleConnectFromCallback(code, state),
+  };
+  googleCallbackInFlight = callback;
+
+  try {
+    return await callback.promise;
+  } finally {
+    if (googleCallbackInFlight === callback) {
+      googleCallbackInFlight = null;
+    }
+  }
+}
+
+async function finishGoogleConnectFromCallback(code: string, state: string | null) {
   const expectedState = window.sessionStorage.getItem("kiddai.web.oauthState");
-  window.sessionStorage.removeItem("kiddai.web.oauthState");
 
   if (!expectedState || !state || expectedState !== state) {
-    throw new Error("Google sign-in state mismatch. Try Connect Google again.");
+    throw new Error("Google sign-in state mismatch. Try Connect Google again from Settings.");
   }
 
   const redirectUri = getRedirectUri();
@@ -174,6 +206,7 @@ export async function completeGoogleConnectFromCallback(code: string, state: str
     throw new Error(payload.error || "Unable to complete Google sign-in.");
   }
 
+  window.sessionStorage.removeItem("kiddai.web.oauthState");
   const token = persistTokenResponse(payload);
   const email = await fetchAccountEmail(token.accessToken);
   const connection: GoogleConnectionState = {
