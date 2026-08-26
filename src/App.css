@@ -2664,17 +2664,6 @@ a {
   font-size: 0.74rem;
   font-weight: 750;
 }
-.customer-noti-pill--line {
-  background: rgba(46, 125, 70, 0.12);
-  color: #2a6b3c;
-}
-.designer-picker__badge--remind {
-  background: #e67a22;
-}
-.customer-noti-pill--remind {
-  background: rgba(230, 122, 34, 0.14);
-  color: #c45e10;
-}
 .customer-noti-hint {
   margin: 6px 0 0;
   max-width: 52rem;
@@ -2685,26 +2674,14 @@ a {
 .customer-row--unread td {
   background: rgba(198, 40, 40, 0.07) !important;
 }
-.customer-row--unread-line td {
-  background: rgba(46, 125, 70, 0.07) !important;
-}
 .customer-name--unread {
   color: #9b1c1c;
-}
-.customer-name--unread-line {
-  color: #2a6b3c;
-}
-.customer-row--remind td {
-  background: rgba(230, 122, 34, 0.08) !important;
 }
 .customer-name-row {
   display: inline-flex;
   max-width: 280px;
   align-items: center;
   gap: 6px;
-}
-.customer-name--remind {
-  color: #c45e10;
 }
 .customer-name__bell {
   display: inline-flex;
@@ -2725,19 +2702,14 @@ a {
   box-shadow: 0 0 0 3px rgba(198, 40, 40, 0.22);
   animation: customer-bell-pulse 1.6s ease-in-out infinite;
 }
-.customer-name__bell--line {
-  background: #2e7d46;
-  box-shadow: 0 0 0 3px rgba(46, 125, 70, 0.22);
-  animation: customer-bell-pulse-line 1.6s ease-in-out infinite;
-}
 .customer-name__bell--remind {
   visibility: visible;
   border: 0;
   padding: 0;
   color: #fffdf8;
-  background: #e67a22;
-  box-shadow: 0 0 0 3px rgba(230, 122, 34, 0.28);
-  animation: customer-bell-pulse-remind 1.6s ease-in-out infinite;
+  background: #c62828;
+  box-shadow: 0 0 0 3px rgba(198, 40, 40, 0.22);
+  animation: customer-bell-pulse 1.6s ease-in-out infinite;
   cursor: pointer;
 }
 .customer-name__text {
@@ -2751,24 +2723,6 @@ a {
   }
   50% {
     box-shadow: 0 0 0 5px rgba(198, 40, 40, 0.3);
-  }
-}
-@keyframes customer-bell-pulse-line {
-  0%,
-  100% {
-    box-shadow: 0 0 0 3px rgba(46, 125, 70, 0.18);
-  }
-  50% {
-    box-shadow: 0 0 0 5px rgba(46, 125, 70, 0.3);
-  }
-}
-@keyframes customer-bell-pulse-remind {
-  0%,
-  100% {
-    box-shadow: 0 0 0 3px rgba(230, 122, 34, 0.2);
-  }
-  50% {
-    box-shadow: 0 0 0 5px rgba(230, 122, 34, 0.38);
   }
 }
 .customer-list-panel { min-width: 0; overflow: hidden; }
@@ -2866,9 +2820,6 @@ a {
   font-size: 0.58rem;
   font-weight: 800;
   line-height: 1;
-}
-.customer-view-switch__noti--remind {
-  background: #e67a22;
 }
 .customer-list-toolbar__mode {
   position: relative;

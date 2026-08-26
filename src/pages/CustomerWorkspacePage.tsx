@@ -60,7 +60,6 @@ import {
   writeCachedTemplateSpreadsheetIds,
 } from "../utils/linksSheet";
 import {
-  countCustomerCheckReminders,
   customerReminderKey,
   hasCustomerCheckReminder,
   toggleCustomerCheckReminder,
@@ -383,63 +382,38 @@ function notificationsForCustomer(notifications: MessagingNotification[], custom
   );
 }
 
-/** Distinct customers in the designer list with ≥1 matched unread (channel-gated by `line@`). */
-function countDistinctCustomersWithUnread(
+function countDistinctCustomersWithAlert(
+  mode: CustomerMode,
+  designerName: DesignerName,
   records: CustomerRecord[],
   notifications: MessagingNotification[],
 ) {
-  if (records.length === 0 || notifications.length === 0) {
-    return 0;
-  }
   let count = 0;
   for (const record of records) {
-    if (
-      notifications.some((item) =>
-        notificationAppliesToCustomer(item.senderName, record.customerName, item.source),
-      )
-    ) {
+    const hasUnread = notifications.some((item) =>
+      notificationAppliesToCustomer(item.senderName, record.customerName, item.source),
+    );
+    const hasRemind = hasCustomerCheckReminder(
+      customerReminderKey(mode, designerName, record.projectNumber, record.customerName),
+    );
+    if (hasUnread || hasRemind) {
       count += 1;
     }
   }
   return count;
 }
 
-function unreadSourcesForCustomer(unreadForRow: MessagingNotification[]) {
-  const hasLine = unreadForRow.some((item) => item.source === "line");
-  const hasFacebook = unreadForRow.some((item) => item.source === "facebook");
-  return { hasLine, hasFacebook };
-}
-
-function listReminderCount(
-  mode: CustomerMode,
-  designerName: DesignerName,
-  records: CustomerRecord[],
-) {
-  return countCustomerCheckReminders(
-    records.map((record) =>
-      customerReminderKey(mode, designerName, record.projectNumber, record.customerName),
-    ),
-  );
-}
-
 function formatNotiCount(count: number) {
   return count > 9 ? "9+" : String(count);
 }
 
-function tabNotiBadges(unread: number, reminders: number) {
-  if (unread <= 0 && reminders <= 0) {
+function tabNotiBadge(count: number) {
+  if (count <= 0) {
     return null;
   }
   return (
     <span className="customer-view-switch__notis">
-      {unread > 0 ? (
-        <span className="customer-view-switch__noti">{formatNotiCount(unread)}</span>
-      ) : null}
-      {reminders > 0 ? (
-        <span className="customer-view-switch__noti customer-view-switch__noti--remind">
-          {formatNotiCount(reminders)}
-        </span>
-      ) : null}
+      <span className="customer-view-switch__noti">{formatNotiCount(count)}</span>
     </span>
   );
 }
@@ -779,8 +753,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }, [query, sourceRecords]);
 
-  const stageUnreadCounts = useMemo(() => {
-    const empty = { waiting: { unread: 0, reminders: 0 }, installing: { unread: 0, reminders: 0 }, finished: { unread: 0, reminders: 0 } };
+  const stageAlertCounts = useMemo(() => {
+    const empty = { waiting: 0, installing: 0, finished: 0 };
     if (mode !== "deposit") {
       return empty;
     }
@@ -793,29 +767,18 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     for (const record of owned) {
       grouped[classifyDepositInstallStatus(record.installation)].push(record);
     }
-    const countsFor = (list: CustomerRecord[]) => {
-      void reminderRevision;
-      return {
-        unread: countDistinctCustomersWithUnread(list, messagingNotifications),
-        reminders: listReminderCount(mode, designer, list),
-      };
-    };
+    void reminderRevision;
     return {
-      waiting: countsFor(grouped.waiting),
-      installing: countsFor(grouped.installing),
-      finished: countsFor(grouped.finished),
+      waiting: countDistinctCustomersWithAlert(mode, designer, grouped.waiting, messagingNotifications),
+      installing: countDistinctCustomersWithAlert(mode, designer, grouped.installing, messagingNotifications),
+      finished: countDistinctCustomersWithAlert(mode, designer, grouped.finished, messagingNotifications),
     };
   }, [designer, finishedAll, messagingNotifications, mode, reminderRevision]);
 
-  const activeListUnreadCount = useMemo(
-    () => countDistinctCustomersWithUnread(records, messagingNotifications),
-    [messagingNotifications, records],
-  );
-
-  const activeListReminderCount = useMemo(
-    () => (reminderRevision >= 0 ? listReminderCount(mode, designer, records) : 0),
-    [designer, mode, records, reminderRevision],
-  );
+  const activeListAlertCount = useMemo(() => {
+    void reminderRevision;
+    return countDistinctCustomersWithAlert(mode, designer, records, messagingNotifications);
+  }, [designer, messagingNotifications, mode, records, reminderRevision]);
 
   async function resolveTemplateSpreadsheetIds() {
     const memoryValue = templateIdsCacheRef.current;
@@ -1567,7 +1530,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       onClick={() => setDepositView("active")}
                     >
                       Deposit & Clearing
-                      {tabNotiBadges(activeListUnreadCount, activeListReminderCount)}
+                      {tabNotiBadge(activeListAlertCount)}
                     </button>
                   </div>
                   <span className="customer-count">{filteredRecords.length} customers</span>
@@ -1579,7 +1542,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     <span className="customer-list-toolbar__dot">·</span>
                     <span className="customer-list-toolbar__mode">
                       Selling
-                      {tabNotiBadges(activeListUnreadCount, activeListReminderCount)}
+                      {tabNotiBadge(activeListAlertCount)}
                     </span>
                   </h2>
                   <span className="customer-count">{filteredRecords.length} customers</span>
@@ -1596,7 +1559,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   onClick={() => setDepositView("waiting")}
                 >
                   Waiting to install
-                  {tabNotiBadges(stageUnreadCounts.waiting.unread, stageUnreadCounts.waiting.reminders)}
+                  {tabNotiBadge(stageAlertCounts.waiting)}
                 </button>
                 <button
                   className={`customer-view-switch__tab${depositView === "installing" ? " customer-view-switch__tab--active" : ""}`}
@@ -1606,7 +1569,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   onClick={() => setDepositView("installing")}
                 >
                   Installing now
-                  {tabNotiBadges(stageUnreadCounts.installing.unread, stageUnreadCounts.installing.reminders)}
+                  {tabNotiBadge(stageAlertCounts.installing)}
                 </button>
                 <button
                   className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
@@ -1616,7 +1579,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   onClick={() => setDepositView("finished")}
                 >
                   Finished
-                  {tabNotiBadges(stageUnreadCounts.finished.unread, stageUnreadCounts.finished.reminders)}
+                  {tabNotiBadge(stageAlertCounts.finished)}
                 </button>
               </div>
             ) : null}
@@ -1709,23 +1672,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     record.customerName,
                   );
                   const hasRemind = hasCustomerCheckReminder(reminderKeyFor(record));
-                  const { hasLine, hasFacebook } = unreadSourcesForCustomer(unreadForRow);
                   const hasUnread = unreadForRow.length > 0;
+                  const hasAlert = hasUnread || hasRemind;
                   const latestPreview = unreadForRow[0]?.preview;
-                  const rowClass = [
-                    hasUnread && hasLine ? "customer-row--unread customer-row--unread-line" : "",
-                    hasUnread && !hasLine ? "customer-row--unread" : "",
-                    hasRemind && !hasUnread ? "customer-row--remind" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ") || undefined;
-                  const nameUnreadClass = hasLine
-                    ? " customer-name--unread customer-name--unread-line"
-                    : hasFacebook
-                      ? " customer-name--unread"
-                      : hasRemind
-                        ? " customer-name--remind"
-                        : "";
+                  const rowClass = hasAlert ? "customer-row--unread" : undefined;
+                  const nameUnreadClass = hasAlert ? " customer-name--unread" : "";
                   return (
                   <tr key={record.id} className={rowClass}>
                     <td>
@@ -1742,7 +1693,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             toggleReminder(record);
                           }
                         }}
-                        title="Triple-click to show or hide the orange reminder"
+                        title="Triple-click to show or hide the reminder"
                       >
                         {record.projectNumber}
                       </button>
@@ -1754,8 +1705,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             className="customer-name__bell customer-name__bell--on customer-name__bell--remind"
                             type="button"
                             onClick={() => toggleReminder(record)}
-                            title="Hide orange reminder"
-                            aria-label="Hide orange reminder"
+                            title="Hide reminder"
+                            aria-label="Hide reminder"
                           >
                             <Bell size={14} strokeWidth={2.5} />
                           </button>
@@ -1772,23 +1723,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                                 : undefined
                           }
                         >
-                          {hasLine ? (
-                            <span
-                              className="customer-name__bell customer-name__bell--on customer-name__bell--line"
-                              aria-label="New LINE message"
-                            >
-                              <Bell size={14} strokeWidth={2.5} />
-                            </span>
-                          ) : null}
-                          {hasFacebook ? (
+                          {hasUnread && !hasRemind ? (
                             <span
                               className="customer-name__bell customer-name__bell--on"
-                              aria-label="New Facebook message"
+                              aria-label="New message"
                             >
                               <Bell size={14} strokeWidth={2.5} />
                             </span>
                           ) : null}
-                          {!hasUnread && !hasRemind ? (
+                          {!hasAlert ? (
                             <span className="customer-name__bell" aria-hidden>
                               <Bell size={14} strokeWidth={2.5} />
                             </span>
