@@ -149,29 +149,40 @@ export async function connectGoogleAccount(): Promise<GoogleConnectionState> {
   return await new Promise<GoogleConnectionState>(() => undefined);
 }
 
-let googleCallbackInFlight: Promise<GoogleConnectionState> | null = null;
+type GoogleCallbackInFlight = {
+  code: string;
+  state: string | null;
+  promise: Promise<GoogleConnectionState>;
+};
+
+let googleCallbackInFlight: GoogleCallbackInFlight | null = null;
 
 export async function completeGoogleConnectFromCallback(code: string, state: string | null) {
-  if (googleCallbackInFlight) {
-    return googleCallbackInFlight;
+  if (
+    googleCallbackInFlight &&
+    googleCallbackInFlight.code === code &&
+    googleCallbackInFlight.state === state
+  ) {
+    return googleCallbackInFlight.promise;
   }
 
-  googleCallbackInFlight = finishGoogleConnectFromCallback(code, state);
+  const callback: GoogleCallbackInFlight = {
+    code,
+    state,
+    promise: finishGoogleConnectFromCallback(code, state),
+  };
+  googleCallbackInFlight = callback;
+
   try {
-    return await googleCallbackInFlight;
+    return await callback.promise;
   } finally {
-    googleCallbackInFlight = null;
+    if (googleCallbackInFlight === callback) {
+      googleCallbackInFlight = null;
+    }
   }
 }
 
 async function finishGoogleConnectFromCallback(code: string, state: string | null) {
-  const existingConnection = readStoredConnection();
-  const existingToken = readStoredToken();
-  if (existingConnection?.status === "Connected" && existingToken?.accessToken) {
-    window.sessionStorage.removeItem("kiddai.web.oauthState");
-    return existingConnection;
-  }
-
   const expectedState = window.sessionStorage.getItem("kiddai.web.oauthState");
 
   if (!expectedState || !state || expectedState !== state) {
