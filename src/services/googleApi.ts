@@ -1485,21 +1485,31 @@ export async function createQueueNumberFolders(options: {
   return { createdFolders, existingFolders };
 }
 
+const recentExternalOpens = new Map<string, number>();
+
+/** Open one new tab. Do not call window.open twice — Safari/Chrome on some Macs
+ *  return null for `noopener` even after the first tab already opened. */
 export function openExternalUrl(targetUrl: string) {
   const url = targetUrl.trim();
   if (!url) {
-    return null;
+    return;
   }
-  const opened = window.open(url, "_blank", "noopener,noreferrer");
-  if (!opened) {
-    return window.open(url, "_blank");
+
+  const now = Date.now();
+  const lastOpen = recentExternalOpens.get(url) ?? 0;
+  if (now - lastOpen < 800) {
+    return;
   }
-  try {
-    opened.focus();
-  } catch {
-    // ignore focus errors from cross-origin tabs
-  }
-  return opened;
+  recentExternalOpens.set(url, now);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.referrerPolicy = "no-referrer";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 export function spreadsheetEditUrl(fileId: string, fallbackUrl = "") {
