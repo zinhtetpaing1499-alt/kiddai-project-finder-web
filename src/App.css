@@ -2903,40 +2903,46 @@ a {
 }
 .customer-table tbody tr:nth-child(even) td { background: rgba(247, 241, 232, 0.45); }
 .customer-table tbody tr:hover td { background: #f8f0e5; }
-.customer-table__project-heading,
-.customer-table__project {
-  position: sticky;
+.customer-table thead th.customer-table__project-heading,
+.customer-table tbody td.customer-table__project {
   left: 0;
-  z-index: 4;
   width: 96px;
   min-width: 96px;
   background: #fffaf3;
 }
-.customer-table__customer-heading,
-.customer-table__customer {
-  position: sticky;
+.customer-table thead th.customer-table__customer-heading,
+.customer-table tbody td.customer-table__customer {
   left: 96px;
-  z-index: 4;
   min-width: 168px;
   max-width: 280px;
   background: #fffaf3;
   box-shadow: 8px 0 14px rgba(72, 57, 45, 0.06);
 }
-.customer-table__project-heading,
-.customer-table__customer-heading {
-  z-index: 8;
+.customer-table thead th.customer-table__project-heading,
+.customer-table thead th.customer-table__customer-heading {
+  position: sticky;
+  top: 0;
+  z-index: 12;
   background: #f5ede1;
 }
-.customer-table tbody tr:nth-child(even) .customer-table__project,
-.customer-table tbody tr:nth-child(even) .customer-table__customer {
+.customer-table thead th.customer-table__customer-heading {
+  left: 96px;
+}
+.customer-table tbody td.customer-table__project,
+.customer-table tbody td.customer-table__customer {
+  position: sticky;
+  z-index: 5;
+}
+.customer-table tbody tr:nth-child(even) td.customer-table__project,
+.customer-table tbody tr:nth-child(even) td.customer-table__customer {
   background: #f7f1e8;
 }
-.customer-table tbody tr:hover .customer-table__project,
-.customer-table tbody tr:hover .customer-table__customer {
+.customer-table tbody tr:hover td.customer-table__project,
+.customer-table tbody tr:hover td.customer-table__customer {
   background: #f8f0e5;
 }
-.customer-row--unread .customer-table__project,
-.customer-row--unread .customer-table__customer {
+.customer-table tbody tr.customer-row--unread td.customer-table__project,
+.customer-table tbody tr.customer-row--unread td.customer-table__customer {
   background: #f8ece8;
 }
 .customer-project-number {
