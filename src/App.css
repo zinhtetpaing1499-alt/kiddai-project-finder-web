@@ -2903,6 +2903,42 @@ a {
 }
 .customer-table tbody tr:nth-child(even) td { background: rgba(247, 241, 232, 0.45); }
 .customer-table tbody tr:hover td { background: #f8f0e5; }
+.customer-table__project-heading,
+.customer-table__project {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  width: 96px;
+  min-width: 96px;
+  background: #fffaf3;
+}
+.customer-table__customer-heading,
+.customer-table__customer {
+  position: sticky;
+  left: 96px;
+  z-index: 4;
+  min-width: 168px;
+  max-width: 280px;
+  background: #fffaf3;
+  box-shadow: 8px 0 14px rgba(72, 57, 45, 0.06);
+}
+.customer-table__project-heading,
+.customer-table__customer-heading {
+  z-index: 8;
+  background: #f5ede1;
+}
+.customer-table tbody tr:nth-child(even) .customer-table__project,
+.customer-table tbody tr:nth-child(even) .customer-table__customer {
+  background: #f7f1e8;
+}
+.customer-table tbody tr:hover .customer-table__project,
+.customer-table tbody tr:hover .customer-table__customer {
+  background: #f8f0e5;
+}
+.customer-row--unread .customer-table__project,
+.customer-row--unread .customer-table__customer {
+  background: #f8ece8;
+}
 .customer-project-number {
   display: inline-flex;
   padding: 4px 8px;
@@ -3136,6 +3172,44 @@ a {
   .customer-list-toolbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .customer-table-wrap {
+    max-height: calc(100vh - 280px);
+  }
+
+  .customer-table--deposit,
+  .customer-table--selling {
+    min-width: 960px;
+  }
+
+  .customer-table__actions-heading,
+  .customer-table__actions {
+    right: auto;
+    box-shadow: none;
+  }
+
+  .customer-table__customer-heading,
+  .customer-table__customer {
+    min-width: min(58vw, 220px);
+    max-width: min(62vw, 240px);
+    white-space: normal;
+  }
+
+  .customer-name-row,
+  .customer-name {
+    max-width: 100%;
+  }
+
+  .customer-name,
+  .customer-name__text {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .customer-actions {
+    flex-wrap: wrap;
   }
 }
 

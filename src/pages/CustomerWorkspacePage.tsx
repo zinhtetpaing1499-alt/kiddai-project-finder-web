@@ -1481,22 +1481,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     setReminderRevision((value) => value + 1);
   }
 
-  function stickerButton(record: CustomerRecord) {
-    const isBusy = busyActionKey === `${record.id}:sticker`;
-    return (
-      <button
-        className={`customer-action customer-action--sticker${isBusy ? " customer-action--busy" : ""}`}
-        type="button"
-        onClick={() => void openStickerLink(record)}
-        disabled={Boolean(busyActionKey)}
-        aria-busy={isBusy}
-      >
-        {isBusy ? <LoaderCircle className="customer-action__spinner" size={14} /> : <ExternalLink size={14} />}
-        {isBusy ? "Working…" : "Sticker"}
-      </button>
-    );
-  }
-
   return (
     <div className="customer-workspace">
       <section className="customer-list-panel">
@@ -1646,8 +1630,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
             <table className={`customer-table customer-table--${mode}`}>
               <thead>
                 <tr>
-                  <th>Project</th>
-                  <th>Customer</th>
+                  <th className="customer-table__project-heading">Project</th>
+                  <th className="customer-table__customer-heading">Customer</th>
                   <th>{mode === "selling" ? "Estimate Price" : "Amount"}</th>
                   <th>{mode === "selling" ? "Measurement" : "Deadline"}</th>
                   <th>Installation</th>
@@ -1679,7 +1663,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   const nameUnreadClass = hasAlert ? " customer-name--unread" : "";
                   return (
                   <tr key={record.id} className={rowClass}>
-                    <td>
+                    <td className="customer-table__project">
                       <button
                         className="customer-project-number"
                         type="button"
@@ -1698,7 +1682,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                         {record.projectNumber}
                       </button>
                     </td>
-                    <td>
+                    <td className="customer-table__customer">
                       <div className="customer-name-row">
                         {hasRemind ? (
                           <button
@@ -1773,17 +1757,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                         {mode === "deposit" && depositView === "active" ? (
                           <>
                             {actionButton(record, "qc", "QC", "sheet")}
-                            {actionButton(record, "queue", "Queue", "folder")}
-                            {actionButton(record, "presentation", "Present", "presentation")}
-                            {stickerButton(record)}
-                          </>
-                        ) : null}
-                        {mode === "selling" ? (
-                          <>
-                            {actionButton(record, "quotation", "Quotation", "sheet")}
                             {actionButton(record, "presentation", "Present", "presentation")}
                           </>
                         ) : null}
+                        {mode === "selling" ? actionButton(record, "quotation", "Quotation", "sheet") : null}
                       </div>
                     </td>
                   </tr>
