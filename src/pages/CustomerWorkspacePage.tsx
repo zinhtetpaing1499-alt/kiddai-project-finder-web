@@ -1446,24 +1446,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                         onClick={() => void openCustomerContact(record)}
                         title={latestPreview ? `New message: ${latestPreview}` : undefined}
                       >
-                        {hasLine ? (
-                          <span
-                            className="customer-name__bell customer-name__bell--on customer-name__bell--line"
-                            aria-label="New LINE message"
-                          >
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        {hasFacebook ? (
+                        {hasUnread ? (
                           <span
                             className="customer-name__bell customer-name__bell--on"
-                            aria-label="New Facebook message"
+                            aria-label="New message"
                           >
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        {!hasUnread ? (
-                          <span className="customer-name__bell" aria-hidden>
                             <Bell size={14} strokeWidth={2.5} />
                           </span>
                         ) : null}
