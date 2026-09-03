@@ -20,7 +20,7 @@ type GoogleOAuthClientFile = {
   };
 };
 
-function readOAuthClient() {
+function tryReadOAuthClient() {
   const candidates = [
     path.resolve(__dirname, "../src-tauri/secrets/google-oauth-client.json"),
     path.resolve(__dirname, "secrets/google-oauth-client.json"),
@@ -45,9 +45,35 @@ function readOAuthClient() {
     };
   }
 
-  throw new Error(
-    "Missing Google OAuth client JSON. Expected src-tauri/secrets/google-oauth-client.json",
-  );
+  return null;
+}
+
+const LIVE_GOOGLE_API_ORIGIN =
+  process.env.KIDDAI_LIVE_GOOGLE_API?.trim() || "https://kiddai.netlify.app";
+
+async function proxyGoogleAuthToLiveSite(req: IncomingMessage, res: ServerResponse) {
+  const pathAndQuery = req.url ?? "/";
+  const target = `${LIVE_GOOGLE_API_ORIGIN}${pathAndQuery}`;
+  const headers: Record<string, string> = {};
+  if (req.headers["content-type"]) {
+    headers["Content-Type"] = String(req.headers["content-type"]);
+  }
+
+  const init: RequestInit = { method: req.method ?? "GET", headers };
+  if (req.method && req.method !== "GET" && req.method !== "HEAD") {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    init.body = Buffer.concat(chunks);
+  }
+
+  const response = await fetch(target, init);
+  const text = await response.text();
+  res.statusCode = response.status;
+  res.setHeader("Content-Type", response.headers.get("content-type") || "application/json");
+  res.setHeader("Cache-Control", "no-store");
+  res.end(text);
 }
 
 async function readJsonBody(req: IncomingMessage) {
@@ -76,7 +102,11 @@ function googleAuthApiPlugin(): Plugin {
         }
 
         try {
-          const oauth = readOAuthClient();
+          const oauth = tryReadOAuthClient();
+          if (!oauth) {
+            await proxyGoogleAuthToLiveSite(req, res);
+            return;
+          }
 
           if (req.method === "GET" && req.url === "/api/google/client-id") {
             sendJson(res, 200, { clientId: oauth.clientId });

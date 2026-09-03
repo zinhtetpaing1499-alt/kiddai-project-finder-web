@@ -22,7 +22,7 @@ export const workspaceRoutes: WorkspaceRoute[] = [
     to: "/selling-customers",
     icon: BadgeDollarSign,
     title: "Selling Customers",
-    subtitle: "Choose a designer, review the live selling list, and create quotation or presentation files.",
+    subtitle: "Choose a designer, review the live selling list, and create quotation files.",
   },
   {
     label: "Settings",

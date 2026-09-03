@@ -1,6 +1,5 @@
 import {
   Bell,
-  CheckCircle2,
   ExternalLink,
   FolderOpen,
   LoaderCircle,
@@ -31,6 +30,7 @@ import {
   createProjectSheet,
   createQueueNumberFolders,
   ensureQcSheet,
+  fetchSpreadsheetMetadata,
   fetchWorkflowWorksheetRows,
   findQcDestinationFolders,
   findSellingCustomerFolders,
@@ -59,11 +59,23 @@ import {
   writeCachedWorkspaceLinks,
   writeCachedTemplateSpreadsheetIds,
 } from "../utils/linksSheet";
+import {
+  customerReminderKey,
+  hasCustomerCheckReminder,
+  toggleCustomerCheckReminder,
+} from "../utils/customerCheckReminders";
+import {
+  classifyDepositInstallStatus,
+  matchDepositStageOwner,
+  parseDepositStageFinished,
+  resolveDepositStageWorksheetName,
+} from "../utils/depositStage";
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
-const CUSTOMER_AUTO_SYNC_MS = 15_000;
-const MESSAGING_NOTI_POLL_MS = 12_000;
+const FINISHED_CACHE_VERSION = 3;
+const CUSTOMER_AUTO_SYNC_MS = 4_000;
+const MESSAGING_NOTI_POLL_MS = 4_000;
 
 /** Shared shape for FB + LINE unread matching / bell UI. */
 type MessagingNotification = {
@@ -94,6 +106,8 @@ type CustomerRecord = {
   qc: string;
   pieces: string;
   sendCnc: string;
+  owner: string;
+  finishedAt: string;
 };
 
 type CustomerCachePayload = {
@@ -103,6 +117,19 @@ type CustomerCachePayload = {
   fetchedAt: string;
   records: CustomerRecord[];
 };
+
+type FinishedCachePayload = {
+  version: number;
+  fetchedAt: string;
+  worksheetName: string;
+  records: CustomerRecord[];
+};
+
+type DepositListView = "active" | "waiting" | "installing" | "finished";
+
+function isDepositStageView(view: DepositListView) {
+  return view === "waiting" || view === "installing" || view === "finished";
+}
 
 type TemplateSpreadsheetIds = Record<CreateSheetKind, string>;
 
@@ -226,8 +253,36 @@ function writeCache(payload: CustomerCachePayload) {
   }
 }
 
+function finishedCacheKey() {
+  return `kiddai.depositStageFinished.${FINISHED_CACHE_VERSION}`;
+}
+
+function readFinishedCache(): FinishedCachePayload | null {
+  try {
+    const rawValue = window.localStorage.getItem(finishedCacheKey());
+    if (!rawValue) {
+      return null;
+    }
+    const parsed = JSON.parse(rawValue) as FinishedCachePayload;
+    if (parsed.version !== FINISHED_CACHE_VERSION || !Array.isArray(parsed.records)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeFinishedCache(payload: FinishedCachePayload) {
+  try {
+    window.localStorage.setItem(finishedCacheKey(), JSON.stringify(payload));
+  } catch (error) {
+    console.error("Unable to save the finished-customer cache.", error);
+  }
+}
+
 function getCell(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
-  return rows[rowIndex]?.[columnIndex] ?? { text: "", formula: null, links: [] };
+  return rows[rowIndex]?.[columnIndex] ?? { text: "", formula: null, links: [], fill: null };
 }
 
 function getCellText(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
@@ -270,6 +325,8 @@ function parseDesignerCustomers(rows: WorkflowCell[][], mode: CustomerMode) {
       qc: mode === "deposit" ? getCellText(rows, rowIndex, 14) : "",
       pieces: mode === "deposit" ? getCellText(rows, rowIndex, 15) : "",
       sendCnc: mode === "deposit" ? getCellText(rows, rowIndex, 16) : "",
+      owner: "",
+      finishedAt: "",
     });
   }
 
@@ -283,18 +340,6 @@ function statusLabel(value: string) {
 
 function isPositiveStatus(value: string) {
   return ["yes", "done", "complete", "completed", "ready"].includes(value.trim().toLowerCase());
-}
-
-function formatUpdatedAt(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Saved data";
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
 }
 
 function getCustomerName(folderName: string, projectNumber: string, fallback: string) {
@@ -337,59 +382,82 @@ function notificationsForCustomer(notifications: MessagingNotification[], custom
   );
 }
 
-/** Distinct customers in the designer list with ≥1 matched unread (channel-gated by `line@`). */
-function countDistinctCustomersWithUnread(
+function countDistinctCustomersWithAlert(
+  mode: CustomerMode,
+  designerName: DesignerName,
   records: CustomerRecord[],
   notifications: MessagingNotification[],
 ) {
-  if (records.length === 0 || notifications.length === 0) {
-    return 0;
-  }
   let count = 0;
   for (const record of records) {
-    if (
-      notifications.some((item) =>
-        notificationAppliesToCustomer(item.senderName, record.customerName, item.source),
-      )
-    ) {
+    const hasUnread = notifications.some((item) =>
+      notificationAppliesToCustomer(item.senderName, record.customerName, item.source),
+    );
+    const hasRemind = hasCustomerCheckReminder(
+      customerReminderKey(mode, designerName, record.projectNumber, record.customerName),
+    );
+    if (hasUnread || hasRemind) {
       count += 1;
     }
   }
   return count;
 }
 
-function designerUnreadCount(
-  mode: CustomerMode,
-  designerName: DesignerName,
-  notifications: MessagingNotification[],
-  liveRecords: CustomerRecord[],
-  liveDesigner: DesignerName,
-) {
-  const records =
-    designerName === liveDesigner
-      ? liveRecords
-      : (readCache(mode, designerName)?.records ?? []);
-  return countDistinctCustomersWithUnread(records, notifications);
+function formatNotiCount(count: number) {
+  return count > 9 ? "9+" : String(count);
 }
 
-function unreadSourcesForCustomer(unreadForRow: MessagingNotification[]) {
-  const hasLine = unreadForRow.some((item) => item.source === "line");
-  const hasFacebook = unreadForRow.some((item) => item.source === "facebook");
-  return { hasLine, hasFacebook };
+function tabNotiBadge(count: number) {
+  if (count <= 0) {
+    return null;
+  }
+  return <span className="customer-view-switch__noti">{formatNotiCount(count)}</span>;
+}
+
+function uniqueCustomerRecords(records: CustomerRecord[]) {
+  const seen = new Set<string>();
+  const unique: CustomerRecord[] = [];
+  for (const record of records) {
+    const key = `${record.projectNumber}\0${record.customerName}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(record);
+  }
+  return unique;
+}
+
+function recordsForDesignerAlerts(
+  mode: CustomerMode,
+  designerName: DesignerName,
+  currentDesigner: DesignerName,
+  currentRecords: CustomerRecord[],
+  finishedAll: CustomerRecord[],
+) {
+  const active =
+    designerName === currentDesigner ? currentRecords : (readCache(mode, designerName)?.records ?? []);
+  if (mode !== "deposit") {
+    return active;
+  }
+  const stage = finishedAll.filter((record) => matchDepositStageOwner(record.owner, designerName));
+  return uniqueCustomerRecords([...active, ...stage]);
 }
 
 export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const { connection, refreshGoogleConnection } = useGoogleConnection();
   const [designer, setDesigner] = useState<DesignerName>("Tod");
+  const [depositView, setDepositView] = useState<DepositListView>("active");
   const [records, setRecords] = useState<CustomerRecord[]>([]);
+  const [finishedAll, setFinishedAll] = useState<CustomerRecord[]>([]);
   const [query, setQuery] = useState("");
-  const [fetchedAt, setFetchedAt] = useState("");
   const [isInitialLoading, setIsInitialLoading] = useState(false);
-  const [isBackgroundUpdating, setIsBackgroundUpdating] = useState(false);
   const [loadWarning, setLoadWarning] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
   const [busyActionKey, setBusyActionKey] = useState("");
+  const [reminderRevision, setReminderRevision] = useState(0);
+  const [designerCacheRevision, setDesignerCacheRevision] = useState(0);
   const [facebookNotifications, setFacebookNotifications] = useState<FacebookNotification[]>([]);
   const [lineNotifications, setLineNotifications] = useState<LineNotification[]>([]);
   const [pendingLocalFolderChoice, setPendingLocalFolderChoice] =
@@ -426,9 +494,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       requestsInFlightRef.current.add(requestKey);
 
       const requestId = ++requestSequenceRef.current;
-      if (background) {
-        setIsBackgroundUpdating(true);
-      } else {
+      if (!background) {
         setIsInitialLoading(true);
       }
       setLoadWarning("");
@@ -460,7 +526,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
 
         writeCache(nextPayload);
         setRecords(nextRecords);
-        setFetchedAt(worksheetRows.fetchedAt);
       } catch (error) {
         if (requestId !== requestSequenceRef.current) {
           return;
@@ -474,14 +539,149 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         requestsInFlightRef.current.delete(requestKey);
         if (requestId === requestSequenceRef.current) {
           setIsInitialLoading(false);
-          setIsBackgroundUpdating(false);
         }
       }
     },
     [connection.status, designer, mode, refreshGoogleConnection],
   );
 
+  const loadFinishedDepositStage = useCallback(
+    async (background: boolean) => {
+      const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+      if (!spreadsheetId) {
+        setLoadWarning("Save the Workflow Google Sheet in Settings first.");
+        return;
+      }
+
+      const requestKey = "deposit:finished:stage";
+      if (requestsInFlightRef.current.has(requestKey)) {
+        return;
+      }
+      requestsInFlightRef.current.add(requestKey);
+
+      const requestId = ++requestSequenceRef.current;
+      if (!background) {
+        setIsInitialLoading(true);
+      }
+      setLoadWarning("");
+
+      try {
+        if (connection.status !== "Connected") {
+          const restoreResponse = await refreshGoogleConnection();
+          if (restoreResponse.errorMessage) {
+            throw new Error(restoreResponse.errorMessage);
+          }
+          if (!restoreResponse.connection || restoreResponse.connection.status !== "Connected") {
+            throw new Error("Connect Google in Settings before loading customer data.");
+          }
+        }
+
+        let worksheetName = readFinishedCache()?.worksheetName?.trim() ?? "";
+        if (!worksheetName) {
+          const metadata = await fetchSpreadsheetMetadata(spreadsheetId);
+          worksheetName = resolveDepositStageWorksheetName(metadata.worksheetNames) ?? "";
+        }
+        if (!worksheetName) {
+          throw new Error(
+            "Could not find the “Deposit Stage” tab. Add that sheet or check the tab name.",
+          );
+        }
+
+        let worksheetRows;
+        try {
+          worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, worksheetName);
+        } catch (error) {
+          const metadata = await fetchSpreadsheetMetadata(spreadsheetId);
+          const resolvedName = resolveDepositStageWorksheetName(metadata.worksheetNames);
+          if (!resolvedName || resolvedName === worksheetName) {
+            throw error;
+          }
+          worksheetName = resolvedName;
+          worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, worksheetName);
+        }
+        const nextRecords = parseDepositStageFinished(worksheetRows.rows, worksheetName);
+        const nextPayload: FinishedCachePayload = {
+          version: FINISHED_CACHE_VERSION,
+          fetchedAt: worksheetRows.fetchedAt,
+          worksheetName,
+          records: nextRecords,
+        };
+
+        if (requestId !== requestSequenceRef.current) {
+          return;
+        }
+
+        writeFinishedCache(nextPayload);
+        setFinishedAll(nextRecords);
+      } catch (error) {
+        if (requestId !== requestSequenceRef.current) {
+          return;
+        }
+        setLoadWarning(
+          (readFinishedCache()?.records.length ?? 0) > 0
+            ? "Live update delayed. Showing saved finished customers and retrying automatically."
+            : getErrorMessage(error),
+        );
+      } finally {
+        requestsInFlightRef.current.delete(requestKey);
+        if (requestId === requestSequenceRef.current) {
+          setIsInitialLoading(false);
+        }
+      }
+    },
+    [connection.status, refreshGoogleConnection],
+  );
+
   useEffect(() => {
+    if (mode !== "deposit") {
+      setDepositView("active");
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    if (!(mode === "deposit" && isDepositStageView(depositView))) {
+      return;
+    }
+
+    requestSequenceRef.current += 1;
+    setQuery("");
+    setActionMessage("");
+    setActionError("");
+    const cachedValue = readFinishedCache();
+    if (cachedValue) {
+      setFinishedAll(cachedValue.records);
+      setIsInitialLoading(false);
+      void loadFinishedDepositStage(true);
+    } else {
+      setFinishedAll([]);
+      void loadFinishedDepositStage(false);
+    }
+
+    const timer = window.setInterval(() => {
+      void loadFinishedDepositStage(true);
+    }, CUSTOMER_AUTO_SYNC_MS);
+    const refreshWhenActive = () => {
+      if (document.visibilityState === "visible") {
+        void loadFinishedDepositStage(true);
+      }
+    };
+    window.addEventListener("focus", refreshWhenActive);
+    window.addEventListener("online", refreshWhenActive);
+    document.addEventListener("visibilitychange", refreshWhenActive);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenActive);
+      window.removeEventListener("online", refreshWhenActive);
+      document.removeEventListener("visibilitychange", refreshWhenActive);
+      requestSequenceRef.current += 1;
+    };
+  }, [depositView, loadFinishedDepositStage, mode]);
+
+  useEffect(() => {
+    if (mode === "deposit" && isDepositStageView(depositView)) {
+      return;
+    }
     requestSequenceRef.current += 1;
     setQuery("");
     setActionMessage("");
@@ -489,12 +689,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     const cachedValue = readCache(mode, designer);
     if (cachedValue) {
       setRecords(cachedValue.records);
-      setFetchedAt(cachedValue.fetchedAt);
       setIsInitialLoading(false);
       void loadDesignerData(true);
     } else {
       setRecords([]);
-      setFetchedAt("");
       void loadDesignerData(false);
     }
 
@@ -517,7 +715,51 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       document.removeEventListener("visibilitychange", refreshWhenActive);
       requestSequenceRef.current += 1;
     };
-  }, [designer, loadDesignerData, mode]);
+  }, [depositView, designer, loadDesignerData, mode]);
+
+  useEffect(() => {
+    if (connection.status !== "Connected") {
+      return;
+    }
+    const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+    if (!spreadsheetId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function prefetchOtherDesigners() {
+      for (const designerName of DESIGNERS) {
+        if (cancelled || designerName === designer) {
+          continue;
+        }
+        if ((readCache(mode, designerName)?.records.length ?? 0) > 0) {
+          continue;
+        }
+        try {
+          const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, designerName);
+          if (cancelled) {
+            return;
+          }
+          writeCache({
+            version: CUSTOMER_CACHE_VERSION,
+            mode,
+            designer: designerName,
+            fetchedAt: worksheetRows.fetchedAt,
+            records: parseDesignerCustomers(worksheetRows.rows, mode),
+          });
+          setDesignerCacheRevision((value) => value + 1);
+        } catch {
+          // Other designer lists stay empty until that tab is opened.
+        }
+      }
+    }
+
+    void prefetchOtherDesigners();
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.status, designer, mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -561,32 +803,69 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     [facebookNotifications, lineNotifications],
   );
 
+  const sourceRecords = useMemo(() => {
+    if (mode === "deposit" && isDepositStageView(depositView)) {
+      const owned = finishedAll.filter((record) => matchDepositStageOwner(record.owner, designer));
+      const status = depositView === "waiting" ? "waiting" : depositView === "installing" ? "installing" : "finished";
+      return owned.filter(
+        (record) => classifyDepositInstallStatus(record.installation) === status,
+      );
+    }
+    return records;
+  }, [depositView, designer, finishedAll, mode, records]);
+
   const filteredRecords = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) {
-      return records;
+      return sourceRecords;
     }
-    return records.filter((record) =>
+    return sourceRecords.filter((record) =>
       `${record.projectNumber} ${record.customerName}`.toLowerCase().includes(normalizedQuery),
     );
-  }, [query, records]);
+  }, [query, sourceRecords]);
 
-  const matchedUnreadCount = useMemo(
-    () => countDistinctCustomersWithUnread(records, messagingNotifications),
-    [messagingNotifications, records],
-  );
+  const stageAlertCounts = useMemo(() => {
+    const empty = { waiting: 0, installing: 0, finished: 0 };
+    if (mode !== "deposit") {
+      return empty;
+    }
+    const owned = finishedAll.filter((record) => matchDepositStageOwner(record.owner, designer));
+    const grouped = {
+      waiting: [] as CustomerRecord[],
+      installing: [] as CustomerRecord[],
+      finished: [] as CustomerRecord[],
+    };
+    for (const record of owned) {
+      grouped[classifyDepositInstallStatus(record.installation)].push(record);
+    }
+    void reminderRevision;
+    return {
+      waiting: countDistinctCustomersWithAlert(mode, designer, grouped.waiting, messagingNotifications),
+      installing: countDistinctCustomersWithAlert(mode, designer, grouped.installing, messagingNotifications),
+      finished: countDistinctCustomersWithAlert(mode, designer, grouped.finished, messagingNotifications),
+    };
+  }, [designer, finishedAll, messagingNotifications, mode, reminderRevision]);
 
-  const matchedUnreadHasLine = useMemo(
-    () =>
-      records.some((record) =>
-        messagingNotifications.some(
-          (item) =>
-            item.source === "line" &&
-            notificationAppliesToCustomer(item.senderName, record.customerName, item.source),
+  const activeListAlertCount = useMemo(() => {
+    void reminderRevision;
+    return countDistinctCustomersWithAlert(mode, designer, records, messagingNotifications);
+  }, [designer, messagingNotifications, mode, records, reminderRevision]);
+
+  const designerAlertCounts = useMemo(() => {
+    void reminderRevision;
+    void designerCacheRevision;
+    return Object.fromEntries(
+      DESIGNERS.map((designerName) => [
+        designerName,
+        countDistinctCustomersWithAlert(
+          mode,
+          designerName,
+          recordsForDesignerAlerts(mode, designerName, designer, records, finishedAll),
+          messagingNotifications,
         ),
-      ),
-    [messagingNotifications, records],
-  );
+      ]),
+    ) as Record<DesignerName, number>;
+  }, [designer, designerCacheRevision, finishedAll, messagingNotifications, mode, records, reminderRevision]);
 
   async function resolveTemplateSpreadsheetIds() {
     const memoryValue = templateIdsCacheRef.current;
@@ -1280,81 +1559,110 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }
 
-  function stickerButton(record: CustomerRecord) {
-    const isBusy = busyActionKey === `${record.id}:sticker`;
-    return (
-      <button
-        className={`customer-action customer-action--sticker${isBusy ? " customer-action--busy" : ""}`}
-        type="button"
-        onClick={() => void openStickerLink(record)}
-        disabled={Boolean(busyActionKey)}
-        aria-busy={isBusy}
-      >
-        {isBusy ? <LoaderCircle className="customer-action__spinner" size={14} /> : <ExternalLink size={14} />}
-        {isBusy ? "Working…" : "Sticker"}
-      </button>
-    );
+  function reminderKeyFor(record: CustomerRecord, designerName: DesignerName = designer) {
+    return customerReminderKey(mode, designerName, record.projectNumber, record.customerName);
+  }
+
+  function toggleReminder(record: CustomerRecord) {
+    toggleCustomerCheckReminder(reminderKeyFor(record));
+    setReminderRevision((value) => value + 1);
   }
 
   return (
     <div className="customer-workspace">
-      <section className="designer-picker" aria-label="Designers">
-        <div className="designer-picker__tabs">
-          {DESIGNERS.map((designerName) => {
-            const unread = designerUnreadCount(
-              mode,
-              designerName,
-              messagingNotifications,
-              records,
-              designer,
-            );
-            return (
-              <button
-                key={designerName}
-                className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}`}
-                type="button"
-                onClick={() => setDesigner(designerName)}
-              >
-                {designerName}
-                {unread > 0 ? <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span> : null}
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
       <section className="customer-list-panel">
-        <div className="customer-list-toolbar">
-          <div>
-            <div className="customer-list-toolbar__title-row">
-              <h2>
-                {designer} · {mode === "deposit" ? "Deposit & Clearing" : "Selling"}
-              </h2>
-              <span className="customer-count">{filteredRecords.length} customers</span>
-              {matchedUnreadCount > 0 ? (
-                <span
-                  className={`customer-noti-pill${matchedUnreadHasLine ? " customer-noti-pill--line" : ""}`}
-                  title="New LINE or Facebook messages for customers in this list"
+        <div className="customer-workspace__chrome">
+          <div className="designer-picker" aria-label="Designers">
+            <div className="designer-picker__tabs">
+              {DESIGNERS.map((designerName) => {
+                const alertCount = designerAlertCounts[designerName] ?? 0;
+                return (
+                <button
+                  key={designerName}
+                  className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}`}
+                  type="button"
+                  onClick={() => setDesigner(designerName)}
                 >
-                  <Bell size={13} strokeWidth={2.2} />
-                  {matchedUnreadCount} new
-                </span>
-              ) : null}
+                  {designerName}
+                  {alertCount > 0 ? (
+                    <span className="designer-picker__badge" aria-label={`${alertCount} notifications`}>
+                      <Bell size={11} strokeWidth={2.6} />
+                      {formatNotiCount(alertCount)}
+                    </span>
+                  ) : null}
+                </button>
+                );
+              })}
             </div>
           </div>
-          <div className={`customer-sync${loadWarning ? " customer-sync--warning" : ""}`}>
-            {isBackgroundUpdating ? (
-              <LoaderCircle className="customer-action__spinner" size={15} />
-            ) : (
-              <CheckCircle2 size={15} />
-            )}
-            <span>
-              {isBackgroundUpdating
-                ? "Updating…"
-                : fetchedAt
-                  ? `Updated ${formatUpdatedAt(fetchedAt)}`
-                  : "Waiting for data"}
-            </span>
+
+          <div className="customer-list-toolbar">
+            <div className="customer-list-toolbar__title-row">
+              {mode === "deposit" ? (
+                <>
+                  <h2 className="customer-list-toolbar__identity">{designer}</h2>
+                  <div className="customer-view-switch customer-view-switch--solo" role="tablist" aria-label="Deposit list">
+                    <button
+                      className={`customer-view-switch__tab${depositView === "active" ? " customer-view-switch__tab--active" : ""}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={depositView === "active"}
+                      onClick={() => setDepositView("active")}
+                    >
+                      Deposit & Clearing
+                      {tabNotiBadge(activeListAlertCount)}
+                    </button>
+                  </div>
+                  <span className="customer-count">{filteredRecords.length} customers</span>
+                </>
+              ) : (
+                <>
+                  <h2 className="customer-list-toolbar__identity">
+                    {designer}
+                    <span className="customer-list-toolbar__dot">·</span>
+                    <span className="customer-list-toolbar__mode">
+                      Selling
+                      {tabNotiBadge(activeListAlertCount)}
+                    </span>
+                  </h2>
+                  <span className="customer-count">{filteredRecords.length} customers</span>
+                </>
+              )}
+            </div>
+            {mode === "deposit" ? (
+              <div className="customer-view-switch customer-view-switch--stage" role="tablist" aria-label="Install lists">
+                <button
+                  className={`customer-view-switch__tab${depositView === "waiting" ? " customer-view-switch__tab--active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={depositView === "waiting"}
+                  onClick={() => setDepositView("waiting")}
+                >
+                  Waiting to install
+                  {tabNotiBadge(stageAlertCounts.waiting)}
+                </button>
+                <button
+                  className={`customer-view-switch__tab${depositView === "installing" ? " customer-view-switch__tab--active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={depositView === "installing"}
+                  onClick={() => setDepositView("installing")}
+                >
+                  Installing now
+                  {tabNotiBadge(stageAlertCounts.installing)}
+                </button>
+                <button
+                  className={`customer-view-switch__tab${depositView === "finished" ? " customer-view-switch__tab--active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={depositView === "finished"}
+                  onClick={() => setDepositView("finished")}
+                >
+                  Finished
+                  {tabNotiBadge(stageAlertCounts.finished)}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -1377,19 +1685,40 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         {actionMessage ? <div className="customer-notice customer-notice--success">{actionMessage}</div> : null}
         {actionError ? <div className="customer-notice customer-notice--error">{actionError}</div> : null}
 
-        {isInitialLoading && records.length === 0 ? (
+        {isInitialLoading &&
+        (isDepositStageView(depositView) ? finishedAll.length === 0 : records.length === 0) ? (
           <div className="customer-empty-state">
             <LoaderCircle className="customer-action__spinner" size={28} />
-            <strong>Loading {designer} customer data</strong>
+            <strong>
+              {isDepositStageView(depositView)
+                ? "Loading customers from Deposit Stage"
+                : `Loading ${designer} customer data`}
+            </strong>
             <span>The list will be saved locally after this first load.</span>
           </div>
         ) : filteredRecords.length === 0 ? (
           <div className="customer-empty-state">
-            <strong>{query ? "No customers match this search" : "No customer rows found"}</strong>
+            <strong>
+              {query
+                ? "No customers match this search"
+                : depositView === "waiting"
+                  ? `No customers waiting to install for ${designer}`
+                  : depositView === "installing"
+                    ? `No customers currently installing for ${designer}`
+                    : depositView === "finished"
+                      ? `No finished customers for ${designer}`
+                      : "No customer rows found"}
+            </strong>
             <span>
               {query
                 ? "Try a different project number or customer name."
-                : `Check the ${designer} worksheet layout in Settings.`}
+                : depositView === "waiting"
+                  ? "Green Deposit Stage rows whose Install date is still in the future."
+                  : depositView === "installing"
+                    ? "Green Deposit Stage rows from Install date through 5 days after."
+                    : depositView === "finished"
+                      ? "Green Deposit Stage rows whose Install date was more than 5 days ago."
+                      : `Check the ${designer} worksheet layout in Settings.`}
             </span>
           </div>
         ) : (
@@ -1397,11 +1726,12 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
             <table className={`customer-table customer-table--${mode}`}>
               <thead>
                 <tr>
-                  <th>Project</th>
-                  <th>Customer</th>
+                  <th className="customer-table__project-heading">Project</th>
+                  <th className="customer-table__customer-heading">Customer</th>
                   <th>{mode === "selling" ? "Estimate Price" : "Amount"}</th>
                   <th>{mode === "selling" ? "Measurement" : "Deadline"}</th>
                   <th>Installation</th>
+                  {mode === "deposit" && depositView === "finished" ? <th>Finished</th> : null}
                   {mode === "deposit" ? (
                     <>
                       <th>Wood Color</th>
@@ -1421,59 +1751,82 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     messagingNotifications,
                     record.customerName,
                   );
-                  const { hasLine, hasFacebook } = unreadSourcesForCustomer(unreadForRow);
+                  const hasRemind = hasCustomerCheckReminder(reminderKeyFor(record));
                   const hasUnread = unreadForRow.length > 0;
+                  const hasAlert = hasUnread || hasRemind;
                   const latestPreview = unreadForRow[0]?.preview;
-                  const rowUnreadClass = hasLine
-                    ? "customer-row--unread customer-row--unread-line"
-                    : hasFacebook
-                      ? "customer-row--unread"
-                      : undefined;
-                  const nameUnreadClass = hasLine
-                    ? " customer-name--unread customer-name--unread-line"
-                    : hasFacebook
-                      ? " customer-name--unread"
-                      : "";
+                  const rowClass = hasAlert ? "customer-row--unread" : undefined;
+                  const nameUnreadClass = hasAlert ? " customer-name--unread" : "";
                   return (
-                  <tr key={record.id} className={rowUnreadClass}>
-                    <td>
-                      <span className="customer-project-number">{record.projectNumber}</span>
-                    </td>
-                    <td>
+                  <tr key={record.id} className={rowClass}>
+                    <td className="customer-table__project">
                       <button
-                        className={`customer-name${nameUnreadClass}`}
+                        className="customer-project-number"
                         type="button"
-                        onClick={() => void openCustomerContact(record)}
-                        title={latestPreview ? `New message: ${latestPreview}` : undefined}
+                        onMouseDown={(event) => {
+                          if (event.detail === 3) {
+                            event.preventDefault();
+                          }
+                        }}
+                        onClick={(event) => {
+                          if (event.detail === 3) {
+                            toggleReminder(record);
+                          }
+                        }}
+                        title="Triple-click to show or hide the reminder"
                       >
-                        {hasLine ? (
-                          <span
-                            className="customer-name__bell customer-name__bell--on customer-name__bell--line"
-                            aria-label="New LINE message"
-                          >
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        {hasFacebook ? (
-                          <span
-                            className="customer-name__bell customer-name__bell--on"
-                            aria-label="New Facebook message"
-                          >
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        {!hasUnread ? (
-                          <span className="customer-name__bell" aria-hidden>
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        <span className="customer-name__text">{record.customerName}</span>
-                        <ExternalLink size={13} />
+                        {record.projectNumber}
                       </button>
+                    </td>
+                    <td className="customer-table__customer">
+                      <div className="customer-name-row">
+                        {hasRemind ? (
+                          <button
+                            className="customer-name__bell customer-name__bell--on customer-name__bell--remind"
+                            type="button"
+                            onClick={() => toggleReminder(record)}
+                            title="Hide reminder"
+                            aria-label="Hide reminder"
+                          >
+                            <Bell size={14} strokeWidth={2.5} />
+                          </button>
+                        ) : null}
+                        <button
+                          className={`customer-name${nameUnreadClass}`}
+                          type="button"
+                          onClick={() => void openCustomerContact(record)}
+                          title={
+                            hasRemind
+                              ? "Check this customer again"
+                              : latestPreview
+                                ? `New message: ${latestPreview}`
+                                : undefined
+                          }
+                        >
+                          {hasUnread && !hasRemind ? (
+                            <span
+                              className="customer-name__bell customer-name__bell--on"
+                              aria-label="New message"
+                            >
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          {!hasAlert ? (
+                            <span className="customer-name__bell" aria-hidden>
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          <span className="customer-name__text">{record.customerName}</span>
+                          <ExternalLink size={13} />
+                        </button>
+                      </div>
                     </td>
                     <td className="customer-table__amount">{statusLabel(record.amount)}</td>
                     <td>{statusLabel(record.deadline)}</td>
                     <td>{statusLabel(record.installation)}</td>
+                    {mode === "deposit" && depositView === "finished" ? (
+                      <td>{statusLabel(record.finishedAt)}</td>
+                    ) : null}
                     {mode === "deposit" ? (
                       <>
                         {[
@@ -1497,19 +1850,13 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                     <td className="customer-table__actions">
                       <div className="customer-actions">
                         {actionButton(record, "open", "Folder", "folder")}
-                        {mode === "deposit" ? (
+                        {mode === "deposit" && depositView === "active" ? (
                           <>
                             {actionButton(record, "qc", "QC", "sheet")}
-                            {actionButton(record, "queue", "Queue", "folder")}
-                            {actionButton(record, "presentation", "Present", "presentation")}
-                            {stickerButton(record)}
-                          </>
-                        ) : (
-                          <>
-                            {actionButton(record, "quotation", "Quotation", "sheet")}
                             {actionButton(record, "presentation", "Present", "presentation")}
                           </>
-                        )}
+                        ) : null}
+                        {mode === "selling" ? actionButton(record, "quotation", "Quotation", "sheet") : null}
                       </div>
                     </td>
                   </tr>

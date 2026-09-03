@@ -51,11 +51,25 @@ type DriveListResponse = {
   error?: { message?: string };
 };
 
+type SheetGridColor = {
+  red?: number;
+  green?: number;
+  blue?: number;
+};
+
 type SheetGridCell = {
   formattedValue?: string;
   hyperlink?: string;
   userEnteredValue?: { formulaValue?: string };
   textFormatRuns?: Array<{ format?: { link?: { uri?: string } } }>;
+  effectiveFormat?: {
+    backgroundColor?: SheetGridColor;
+    backgroundColorStyle?: { rgbColor?: SheetGridColor };
+  };
+  userEnteredFormat?: {
+    backgroundColor?: SheetGridColor;
+    backgroundColorStyle?: { rgbColor?: SheetGridColor };
+  };
 };
 
 type SheetGridResponse = {
@@ -219,6 +233,22 @@ function selectProjectFolders(
   return bestOnly.map(({ folder }) => toResult(folder));
 }
 
+function readCellFill(cell: SheetGridCell): WorkflowCell["fill"] {
+  const color =
+    cell.effectiveFormat?.backgroundColorStyle?.rgbColor ??
+    cell.effectiveFormat?.backgroundColor ??
+    cell.userEnteredFormat?.backgroundColorStyle?.rgbColor ??
+    cell.userEnteredFormat?.backgroundColor;
+  if (!color) {
+    return null;
+  }
+  return {
+    red: color.red ?? 0,
+    green: color.green ?? 0,
+    blue: color.blue ?? 0,
+  };
+}
+
 function buildWorkflowCell(cell: SheetGridCell): WorkflowCell {
   const formula = cell.userEnteredValue?.formulaValue ?? null;
   const text = (cell.formattedValue ?? "").trim();
@@ -235,7 +265,7 @@ function buildWorkflowCell(cell: SheetGridCell): WorkflowCell {
     }
   }
 
-  return { text, formula, links };
+  return { text, formula, links, fill: readCellFill(cell) };
 }
 
 function buildWorkflowRows(payload: SheetGridResponse): WorkflowCell[][] {
@@ -244,8 +274,8 @@ function buildWorkflowRows(payload: SheetGridResponse): WorkflowCell[][] {
   );
 }
 
-async function googleFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const accessToken = await getValidAccessToken();
+async function googleFetch<T>(url: string, init?: RequestInit, retried = false): Promise<T> {
+  const accessToken = await getValidAccessToken(retried);
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -258,6 +288,10 @@ async function googleFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as T & {
     error?: { message?: string; status?: string };
   };
+
+  if (response.status === 401 && !retried) {
+    return googleFetch<T>(url, init, true);
+  }
 
   if (!response.ok) {
     throw new Error(payload.error?.message || `Google API request failed (${response.status}).`);
@@ -612,7 +646,7 @@ export async function fetchWorkflowWorksheetRows(
 ): Promise<WorkflowWorksheetRows> {
   const encodedRange = encodeURIComponent(worksheetName.trim());
   const fields = encodeURIComponent(
-    "sheets.data.rowData.values(formattedValue,hyperlink,userEnteredValue,textFormatRuns.format.link.uri)",
+    "sheets.data.rowData.values(formattedValue,hyperlink,userEnteredValue,textFormatRuns.format.link.uri,effectiveFormat.backgroundColor,effectiveFormat.backgroundColorStyle,userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle)",
   );
   const payload = await googleFetch<SheetGridResponse>(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId.trim()}?includeGridData=true&ranges=${encodedRange}&fields=${fields}`,
@@ -636,6 +670,10 @@ export async function fetchSpreadsheetMetadata(spreadsheetId: string) {
   return {
     title: payload.properties?.title ?? "Untitled spreadsheet",
     sheetCount: payload.sheets?.length ?? 0,
+    worksheetNames:
+      payload.sheets
+        ?.map((sheet) => sheet.properties?.title?.trim() ?? "")
+        .filter((title) => title.length > 0) ?? [],
   };
 }
 
@@ -1447,21 +1485,31 @@ export async function createQueueNumberFolders(options: {
   return { createdFolders, existingFolders };
 }
 
+const recentExternalOpens = new Map<string, number>();
+
+/** Open one new tab. Do not call window.open twice — Safari/Chrome on some Macs
+ *  return null for `noopener` even after the first tab already opened. */
 export function openExternalUrl(targetUrl: string) {
   const url = targetUrl.trim();
   if (!url) {
-    return null;
+    return;
   }
-  const opened = window.open(url, "_blank", "noopener,noreferrer");
-  if (!opened) {
-    return window.open(url, "_blank");
+
+  const now = Date.now();
+  const lastOpen = recentExternalOpens.get(url) ?? 0;
+  if (now - lastOpen < 800) {
+    return;
   }
-  try {
-    opened.focus();
-  } catch {
-    // ignore focus errors from cross-origin tabs
-  }
-  return opened;
+  recentExternalOpens.set(url, now);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.referrerPolicy = "no-referrer";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 export function spreadsheetEditUrl(fileId: string, fallbackUrl = "") {
