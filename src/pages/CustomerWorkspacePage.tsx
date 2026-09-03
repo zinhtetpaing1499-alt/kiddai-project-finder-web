@@ -1393,8 +1393,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       <section className="designer-picker" aria-label="Designers">
         <div className="designer-picker__tabs">
           {DESIGNERS.map((designerName) => {
-            const unread = designerUnreadCounts[designerName];
-            const showBell = unread.bell > 0;
+            const unread = designerUnreadCounts[designerName] ?? { badge: 0, bell: 0 };
+            const showBell =
+              unread.bell > 0 || (designerName === designer && matchedUnreadCount > 0);
             const badgeCount = unread.badge;
             return (
               <button
@@ -1403,14 +1404,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                 type="button"
                 onClick={() => setDesigner(designerName)}
               >
-                <span className="designer-picker__name">
-                  {designerName}
-                  {showBell ? (
-                    <span className="designer-picker__bell" aria-label="New messages">
-                      <Bell size={12} strokeWidth={2.5} />
-                    </span>
-                  ) : null}
-                </span>
+                {designerName}
+                {showBell ? (
+                  <span
+                    className="customer-name__bell customer-name__bell--on"
+                    aria-label="New messages"
+                  >
+                    <Bell size={14} strokeWidth={2.5} />
+                  </span>
+                ) : null}
                 {badgeCount > 0 ? (
                   <span className="designer-picker__badge">{badgeCount > 9 ? "9+" : badgeCount}</span>
                 ) : null}
