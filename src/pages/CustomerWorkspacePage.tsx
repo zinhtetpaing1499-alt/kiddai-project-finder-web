@@ -410,6 +410,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const templateIdsCacheRef = useRef<{ ids: TemplateSpreadsheetIds; fetchedAt: number } | null>(null);
   const destinationCacheRef = useRef(new Map<string, GoogleDriveFolderCandidate[]>());
   const sellingFolderCacheRef = useRef(new Map<string, ProjectSearchResult[]>());
+  const [designerCacheEpoch, setDesignerCacheEpoch] = useState(0);
 
   const loadDesignerData = useCallback(
     async (background: boolean) => {
@@ -522,6 +523,53 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   useEffect(() => {
     let cancelled = false;
 
+    async function warmOtherDesignerCaches() {
+      const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+      if (!spreadsheetId || connection.status !== "Connected") {
+        return;
+      }
+
+      await Promise.all(
+        DESIGNERS.filter((designerName) => designerName !== designer).map(async (designerName) => {
+          const requestKey = `warm:${mode}:${designerName}`;
+          if (requestsInFlightRef.current.has(requestKey)) {
+            return;
+          }
+          requestsInFlightRef.current.add(requestKey);
+          try {
+            const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, designerName);
+            if (cancelled) {
+              return;
+            }
+            writeCache({
+              version: CUSTOMER_CACHE_VERSION,
+              mode,
+              designer: designerName,
+              fetchedAt: worksheetRows.fetchedAt,
+              records: parseDesignerCustomers(worksheetRows.rows, mode),
+            });
+          } catch {
+            /* keep any existing cache for unread badges */
+          } finally {
+            requestsInFlightRef.current.delete(requestKey);
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setDesignerCacheEpoch((value) => value + 1);
+      }
+    }
+
+    void warmOtherDesignerCaches();
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.status, designer, mode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function refreshMessagingNotifications() {
       const [facebookResult, lineResult] = await Promise.all([
         fetchFacebookNotifications(),
@@ -587,6 +635,16 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       ),
     [messagingNotifications, records],
   );
+
+  const designerUnreadCounts = useMemo(() => {
+    void designerCacheEpoch;
+    return Object.fromEntries(
+      DESIGNERS.map((designerName) => [
+        designerName,
+        designerUnreadCount(mode, designerName, messagingNotifications, records, designer),
+      ]),
+    ) as Record<DesignerName, number>;
+  }, [designer, designerCacheEpoch, messagingNotifications, mode, records]);
 
   async function resolveTemplateSpreadsheetIds() {
     const memoryValue = templateIdsCacheRef.current;
@@ -1301,26 +1359,22 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       <section className="designer-picker" aria-label="Designers">
         <div className="designer-picker__tabs">
           {DESIGNERS.map((designerName) => {
-            const unread = designerUnreadCount(
-              mode,
-              designerName,
-              messagingNotifications,
-              records,
-              designer,
-            );
+            const unread = designerUnreadCounts[designerName];
             return (
               <button
                 key={designerName}
-                className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}`}
+                className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}${unread > 0 ? " designer-picker__tab--unread" : ""}`}
                 type="button"
                 onClick={() => setDesigner(designerName)}
               >
-                {designerName}
-                {unread > 0 ? (
-                  <span className="designer-picker__bell" aria-label="New messages">
-                    <Bell size={11} strokeWidth={2.5} />
-                  </span>
-                ) : null}
+                <span className="designer-picker__name">
+                  {designerName}
+                  {unread > 0 ? (
+                    <span className="designer-picker__bell" aria-label="New messages">
+                      <Bell size={10} strokeWidth={2.6} />
+                    </span>
+                  ) : null}
+                </span>
                 {unread > 0 ? <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span> : null}
               </button>
             );
