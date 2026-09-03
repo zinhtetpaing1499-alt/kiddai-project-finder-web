@@ -2678,6 +2678,18 @@ a {
 .customer-row--unread-line td {
   background: rgba(46, 125, 70, 0.07) !important;
 }
+.customer-row--remind td {
+  background: rgba(230, 122, 34, 0.08) !important;
+}
+.customer-name-row {
+  display: inline-flex;
+  max-width: 280px;
+  align-items: center;
+  gap: 6px;
+}
+.customer-name--remind {
+  color: #c45e10;
+}
 .customer-name--unread {
   color: #9b1c1c;
 }
@@ -2708,6 +2720,16 @@ a {
   box-shadow: 0 0 0 3px rgba(46, 125, 70, 0.22);
   animation: customer-bell-pulse-line 1.6s ease-in-out infinite;
 }
+.customer-name__bell--remind {
+  visibility: visible;
+  border: 0;
+  padding: 0;
+  color: #fffdf8;
+  background: #e67a22;
+  box-shadow: 0 0 0 3px rgba(230, 122, 34, 0.28);
+  animation: customer-bell-pulse-remind 1.6s ease-in-out infinite;
+  cursor: pointer;
+}
 .customer-name__text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2728,6 +2750,15 @@ a {
   }
   50% {
     box-shadow: 0 0 0 5px rgba(46, 125, 70, 0.3);
+  }
+}
+@keyframes customer-bell-pulse-remind {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(230, 122, 34, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(230, 122, 34, 0.38);
   }
 }
 .customer-list-panel { min-width: 0; overflow: hidden; }
@@ -2818,10 +2849,16 @@ a {
 .customer-project-number {
   display: inline-flex;
   padding: 4px 8px;
+  border: 0;
   border-radius: 8px;
   background: var(--bg-active);
   color: var(--accent-strong);
+  font: inherit;
   font-weight: 800;
+  cursor: pointer;
+}
+.customer-project-number:hover {
+  background: #eadccb;
 }
 .customer-name {
   display: inline-flex;

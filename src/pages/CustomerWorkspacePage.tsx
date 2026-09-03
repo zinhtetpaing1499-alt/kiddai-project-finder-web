@@ -59,6 +59,11 @@ import {
   writeCachedWorkspaceLinks,
   writeCachedTemplateSpreadsheetIds,
 } from "../utils/linksSheet";
+import {
+  customerReminderKey,
+  hasCustomerCheckReminder,
+  toggleCustomerCheckReminder,
+} from "../utils/customerCheckReminders";
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
@@ -412,6 +417,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const destinationCacheRef = useRef(new Map<string, GoogleDriveFolderCandidate[]>());
   const sellingFolderCacheRef = useRef(new Map<string, ProjectSearchResult[]>());
   const [designerCacheEpoch, setDesignerCacheEpoch] = useState(0);
+  const [reminderRevision, setReminderRevision] = useState(0);
 
   const loadDesignerData = useCallback(
     async (background: boolean) => {
@@ -1372,6 +1378,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }
 
+  function reminderKeyFor(record: CustomerRecord, designerName: DesignerName = designer) {
+    return customerReminderKey(mode, designerName, record.projectNumber, record.customerName);
+  }
+
+  function toggleReminder(record: CustomerRecord) {
+    toggleCustomerCheckReminder(reminderKeyFor(record));
+    setReminderRevision((value) => value + 1);
+  }
+
   function stickerButton(record: CustomerRecord) {
     const isBusy = busyActionKey === `${record.id}:sticker`;
     return (
@@ -1516,59 +1531,100 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               </thead>
               <tbody>
                 {filteredRecords.map((record) => {
+                  void reminderRevision;
                   const unreadForRow = notificationsForCustomer(
                     messagingNotifications,
                     record.customerName,
                   );
                   const { hasLine, hasFacebook } = unreadSourcesForCustomer(unreadForRow);
+                  const hasRemind = hasCustomerCheckReminder(reminderKeyFor(record));
                   const hasUnread = unreadForRow.length > 0;
                   const latestPreview = unreadForRow[0]?.preview;
                   const rowUnreadClass = hasLine
                     ? "customer-row--unread customer-row--unread-line"
                     : hasFacebook
                       ? "customer-row--unread"
-                      : undefined;
+                      : hasRemind
+                        ? "customer-row--remind"
+                        : undefined;
                   const nameUnreadClass = hasLine
                     ? " customer-name--unread customer-name--unread-line"
                     : hasFacebook
                       ? " customer-name--unread"
-                      : "";
+                      : hasRemind
+                        ? " customer-name--remind"
+                        : "";
                   return (
                   <tr key={record.id} className={rowUnreadClass}>
                     <td>
-                      <span className="customer-project-number">{record.projectNumber}</span>
+                      <button
+                        className="customer-project-number"
+                        type="button"
+                        onMouseDown={(event) => {
+                          if (event.detail === 3) {
+                            event.preventDefault();
+                          }
+                        }}
+                        onClick={(event) => {
+                          if (event.detail === 3) {
+                            toggleReminder(record);
+                          }
+                        }}
+                        title="Triple-click to show or hide the orange reminder"
+                      >
+                        {record.projectNumber}
+                      </button>
                     </td>
                     <td>
-                      <button
-                        className={`customer-name${nameUnreadClass}`}
-                        type="button"
-                        onClick={() => void openCustomerContact(record)}
-                        title={latestPreview ? `New message: ${latestPreview}` : undefined}
-                      >
-                        {hasLine ? (
-                          <span
-                            className="customer-name__bell customer-name__bell--on customer-name__bell--line"
-                            aria-label="New LINE message"
+                      <div className="customer-name-row">
+                        {hasRemind ? (
+                          <button
+                            className="customer-name__bell customer-name__bell--on customer-name__bell--remind"
+                            type="button"
+                            onClick={() => toggleReminder(record)}
+                            title="Hide orange reminder"
+                            aria-label="Hide orange reminder"
                           >
                             <Bell size={14} strokeWidth={2.5} />
-                          </span>
+                          </button>
                         ) : null}
-                        {hasFacebook ? (
-                          <span
-                            className="customer-name__bell customer-name__bell--on"
-                            aria-label="New Facebook message"
-                          >
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        {!hasUnread ? (
-                          <span className="customer-name__bell" aria-hidden>
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        <span className="customer-name__text">{record.customerName}</span>
-                        <ExternalLink size={13} />
-                      </button>
+                        <button
+                          className={`customer-name${nameUnreadClass}`}
+                          type="button"
+                          onClick={() => void openCustomerContact(record)}
+                          title={
+                            hasRemind
+                              ? "Check this customer again"
+                              : latestPreview
+                                ? `New message: ${latestPreview}`
+                                : undefined
+                          }
+                        >
+                          {hasLine ? (
+                            <span
+                              className="customer-name__bell customer-name__bell--on customer-name__bell--line"
+                              aria-label="New LINE message"
+                            >
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          {hasFacebook ? (
+                            <span
+                              className="customer-name__bell customer-name__bell--on"
+                              aria-label="New Facebook message"
+                            >
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          {!hasUnread && !hasRemind ? (
+                            <span className="customer-name__bell" aria-hidden>
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          <span className="customer-name__text">{record.customerName}</span>
+                          <ExternalLink size={13} />
+                        </button>
+                      </div>
                     </td>
                     <td className="customer-table__amount">{statusLabel(record.amount)}</td>
                     <td>{statusLabel(record.deadline)}</td>
