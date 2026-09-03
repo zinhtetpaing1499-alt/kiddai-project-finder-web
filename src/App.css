@@ -2582,7 +2582,8 @@ a {
   overflow: visible;
 }
 .designer-picker__tab {
-  min-width: 0;
+  min-width: auto;
+  flex-shrink: 0;
   padding: 8px 14px;
   border: 0;
   border-radius: 8px;
@@ -2608,30 +2609,31 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
+  min-width: auto;
   overflow: visible;
 }
 .designer-picker__name {
   position: relative;
-  display: inline-block;
-  padding-right: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .designer-picker__tab--unread .designer-picker__name {
-  padding-right: 10px;
+  padding-right: 0;
 }
 .designer-picker__bell {
-  position: absolute;
-  top: -7px;
-  right: -11px;
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   color: #fffdf8;
   background: #c62828;
-  box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.2);
-  pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.22);
+  animation: customer-bell-pulse 1.6s ease-in-out infinite;
 }
 .designer-picker__badge {
   display: inline-flex;

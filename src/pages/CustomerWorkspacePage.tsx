@@ -358,17 +358,18 @@ function countDistinctCustomersWithUnread(
   return count;
 }
 
-function designerUnreadCount(
-  mode: CustomerMode,
+function designerListUnreadCount(
+  listMode: CustomerMode,
   designerName: DesignerName,
   notifications: MessagingNotification[],
   liveRecords: CustomerRecord[],
   liveDesigner: DesignerName,
+  liveMode: CustomerMode,
 ) {
   const records =
-    designerName === liveDesigner
+    designerName === liveDesigner && listMode === liveMode
       ? liveRecords
-      : (readCache(mode, designerName)?.records ?? []);
+      : (readCache(listMode, designerName)?.records ?? []);
   return countDistinctCustomersWithUnread(records, notifications);
 }
 
@@ -460,6 +461,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         }
 
         writeCache(nextPayload);
+        writeCache({
+          ...nextPayload,
+          mode: mode === "deposit" ? "selling" : "deposit",
+          records: parseDesignerCustomers(worksheetRows.rows, mode === "deposit" ? "selling" : "deposit"),
+        });
         setRecords(nextRecords);
         setFetchedAt(worksheetRows.fetchedAt);
       } catch (error) {
@@ -543,10 +549,17 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
             }
             writeCache({
               version: CUSTOMER_CACHE_VERSION,
-              mode,
+              mode: "deposit",
               designer: designerName,
               fetchedAt: worksheetRows.fetchedAt,
-              records: parseDesignerCustomers(worksheetRows.rows, mode),
+              records: parseDesignerCustomers(worksheetRows.rows, "deposit"),
+            });
+            writeCache({
+              version: CUSTOMER_CACHE_VERSION,
+              mode: "selling",
+              designer: designerName,
+              fetchedAt: worksheetRows.fetchedAt,
+              records: parseDesignerCustomers(worksheetRows.rows, "selling"),
             });
           } catch {
             /* keep any existing cache for unread badges */
@@ -639,11 +652,32 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const designerUnreadCounts = useMemo(() => {
     void designerCacheEpoch;
     return Object.fromEntries(
-      DESIGNERS.map((designerName) => [
-        designerName,
-        designerUnreadCount(mode, designerName, messagingNotifications, records, designer),
-      ]),
-    ) as Record<DesignerName, number>;
+      DESIGNERS.map((designerName) => {
+        const depositCount = designerListUnreadCount(
+          "deposit",
+          designerName,
+          messagingNotifications,
+          records,
+          designer,
+          mode,
+        );
+        const sellingCount = designerListUnreadCount(
+          "selling",
+          designerName,
+          messagingNotifications,
+          records,
+          designer,
+          mode,
+        );
+        return [
+          designerName,
+          {
+            badge: mode === "deposit" ? depositCount : sellingCount,
+            bell: depositCount + sellingCount,
+          },
+        ];
+      }),
+    ) as Record<DesignerName, { badge: number; bell: number }>;
   }, [designer, designerCacheEpoch, messagingNotifications, mode, records]);
 
   async function resolveTemplateSpreadsheetIds() {
@@ -1360,22 +1394,26 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         <div className="designer-picker__tabs">
           {DESIGNERS.map((designerName) => {
             const unread = designerUnreadCounts[designerName];
+            const showBell = unread.bell > 0;
+            const badgeCount = unread.badge;
             return (
               <button
                 key={designerName}
-                className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}${unread > 0 ? " designer-picker__tab--unread" : ""}`}
+                className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}${showBell ? " designer-picker__tab--unread" : ""}`}
                 type="button"
                 onClick={() => setDesigner(designerName)}
               >
                 <span className="designer-picker__name">
                   {designerName}
-                  {unread > 0 ? (
+                  {showBell ? (
                     <span className="designer-picker__bell" aria-label="New messages">
-                      <Bell size={10} strokeWidth={2.6} />
+                      <Bell size={12} strokeWidth={2.5} />
                     </span>
                   ) : null}
                 </span>
-                {unread > 0 ? <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span> : null}
+                {badgeCount > 0 ? (
+                  <span className="designer-picker__badge">{badgeCount > 9 ? "9+" : badgeCount}</span>
+                ) : null}
               </button>
             );
           })}
