@@ -59,6 +59,11 @@ import {
   writeCachedWorkspaceLinks,
   writeCachedTemplateSpreadsheetIds,
 } from "../utils/linksSheet";
+import {
+  customerReminderKey,
+  hasCustomerCheckReminder,
+  toggleCustomerCheckReminder,
+} from "../utils/customerCheckReminders";
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
@@ -358,17 +363,18 @@ function countDistinctCustomersWithUnread(
   return count;
 }
 
-function designerUnreadCount(
-  mode: CustomerMode,
+function designerListUnreadCount(
+  listMode: CustomerMode,
   designerName: DesignerName,
   notifications: MessagingNotification[],
   liveRecords: CustomerRecord[],
   liveDesigner: DesignerName,
+  liveMode: CustomerMode,
 ) {
   const records =
-    designerName === liveDesigner
+    designerName === liveDesigner && listMode === liveMode
       ? liveRecords
-      : (readCache(mode, designerName)?.records ?? []);
+      : (readCache(listMode, designerName)?.records ?? []);
   return countDistinctCustomersWithUnread(records, notifications);
 }
 
@@ -410,6 +416,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const templateIdsCacheRef = useRef<{ ids: TemplateSpreadsheetIds; fetchedAt: number } | null>(null);
   const destinationCacheRef = useRef(new Map<string, GoogleDriveFolderCandidate[]>());
   const sellingFolderCacheRef = useRef(new Map<string, ProjectSearchResult[]>());
+  const [designerCacheEpoch, setDesignerCacheEpoch] = useState(0);
+  const [reminderRevision, setReminderRevision] = useState(0);
 
   const loadDesignerData = useCallback(
     async (background: boolean) => {
@@ -459,6 +467,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         }
 
         writeCache(nextPayload);
+        writeCache({
+          ...nextPayload,
+          mode: mode === "deposit" ? "selling" : "deposit",
+          records: parseDesignerCustomers(worksheetRows.rows, mode === "deposit" ? "selling" : "deposit"),
+        });
         setRecords(nextRecords);
         setFetchedAt(worksheetRows.fetchedAt);
       } catch (error) {
@@ -518,6 +531,60 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       requestSequenceRef.current += 1;
     };
   }, [designer, loadDesignerData, mode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function warmOtherDesignerCaches() {
+      const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+      if (!spreadsheetId || connection.status !== "Connected") {
+        return;
+      }
+
+      await Promise.all(
+        DESIGNERS.filter((designerName) => designerName !== designer).map(async (designerName) => {
+          const requestKey = `warm:${mode}:${designerName}`;
+          if (requestsInFlightRef.current.has(requestKey)) {
+            return;
+          }
+          requestsInFlightRef.current.add(requestKey);
+          try {
+            const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, designerName);
+            if (cancelled) {
+              return;
+            }
+            writeCache({
+              version: CUSTOMER_CACHE_VERSION,
+              mode: "deposit",
+              designer: designerName,
+              fetchedAt: worksheetRows.fetchedAt,
+              records: parseDesignerCustomers(worksheetRows.rows, "deposit"),
+            });
+            writeCache({
+              version: CUSTOMER_CACHE_VERSION,
+              mode: "selling",
+              designer: designerName,
+              fetchedAt: worksheetRows.fetchedAt,
+              records: parseDesignerCustomers(worksheetRows.rows, "selling"),
+            });
+          } catch {
+            /* keep any existing cache for unread badges */
+          } finally {
+            requestsInFlightRef.current.delete(requestKey);
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setDesignerCacheEpoch((value) => value + 1);
+      }
+    }
+
+    void warmOtherDesignerCaches();
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.status, designer, mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -587,6 +654,37 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       ),
     [messagingNotifications, records],
   );
+
+  const designerUnreadCounts = useMemo(() => {
+    void designerCacheEpoch;
+    return Object.fromEntries(
+      DESIGNERS.map((designerName) => {
+        const depositCount = designerListUnreadCount(
+          "deposit",
+          designerName,
+          messagingNotifications,
+          records,
+          designer,
+          mode,
+        );
+        const sellingCount = designerListUnreadCount(
+          "selling",
+          designerName,
+          messagingNotifications,
+          records,
+          designer,
+          mode,
+        );
+        return [
+          designerName,
+          {
+            badge: mode === "deposit" ? depositCount : sellingCount,
+            bell: depositCount + sellingCount,
+          },
+        ];
+      }),
+    ) as Record<DesignerName, { badge: number; bell: number }>;
+  }, [designer, designerCacheEpoch, messagingNotifications, mode, records]);
 
   async function resolveTemplateSpreadsheetIds() {
     const memoryValue = templateIdsCacheRef.current;
@@ -1280,6 +1378,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }
 
+  function reminderKeyFor(record: CustomerRecord, designerName: DesignerName = designer) {
+    return customerReminderKey(mode, designerName, record.projectNumber, record.customerName);
+  }
+
+  function toggleReminder(record: CustomerRecord) {
+    toggleCustomerCheckReminder(reminderKeyFor(record));
+    setReminderRevision((value) => value + 1);
+  }
+
   function stickerButton(record: CustomerRecord) {
     const isBusy = busyActionKey === `${record.id}:sticker`;
     return (
@@ -1301,22 +1408,29 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       <section className="designer-picker" aria-label="Designers">
         <div className="designer-picker__tabs">
           {DESIGNERS.map((designerName) => {
-            const unread = designerUnreadCount(
-              mode,
-              designerName,
-              messagingNotifications,
-              records,
-              designer,
-            );
+            const unread = designerUnreadCounts[designerName] ?? { badge: 0, bell: 0 };
+            const showBell =
+              unread.bell > 0 || (designerName === designer && matchedUnreadCount > 0);
+            const badgeCount = unread.badge;
             return (
               <button
                 key={designerName}
-                className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}`}
+                className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}${showBell ? " designer-picker__tab--unread" : ""}`}
                 type="button"
                 onClick={() => setDesigner(designerName)}
               >
                 {designerName}
-                {unread > 0 ? <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span> : null}
+                {showBell ? (
+                  <span
+                    className="customer-name__bell customer-name__bell--on"
+                    aria-label="New messages"
+                  >
+                    <Bell size={14} strokeWidth={2.5} />
+                  </span>
+                ) : null}
+                {badgeCount > 0 ? (
+                  <span className="designer-picker__badge">{badgeCount > 9 ? "9+" : badgeCount}</span>
+                ) : null}
               </button>
             );
           })}
@@ -1417,59 +1531,100 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               </thead>
               <tbody>
                 {filteredRecords.map((record) => {
+                  void reminderRevision;
                   const unreadForRow = notificationsForCustomer(
                     messagingNotifications,
                     record.customerName,
                   );
                   const { hasLine, hasFacebook } = unreadSourcesForCustomer(unreadForRow);
+                  const hasRemind = hasCustomerCheckReminder(reminderKeyFor(record));
                   const hasUnread = unreadForRow.length > 0;
                   const latestPreview = unreadForRow[0]?.preview;
                   const rowUnreadClass = hasLine
                     ? "customer-row--unread customer-row--unread-line"
                     : hasFacebook
                       ? "customer-row--unread"
-                      : undefined;
+                      : hasRemind
+                        ? "customer-row--remind"
+                        : undefined;
                   const nameUnreadClass = hasLine
                     ? " customer-name--unread customer-name--unread-line"
                     : hasFacebook
                       ? " customer-name--unread"
-                      : "";
+                      : hasRemind
+                        ? " customer-name--remind"
+                        : "";
                   return (
                   <tr key={record.id} className={rowUnreadClass}>
                     <td>
-                      <span className="customer-project-number">{record.projectNumber}</span>
+                      <button
+                        className="customer-project-number"
+                        type="button"
+                        onMouseDown={(event) => {
+                          if (event.detail === 3) {
+                            event.preventDefault();
+                          }
+                        }}
+                        onClick={(event) => {
+                          if (event.detail === 3) {
+                            toggleReminder(record);
+                          }
+                        }}
+                        title="Triple-click to show or hide the orange reminder"
+                      >
+                        {record.projectNumber}
+                      </button>
                     </td>
                     <td>
-                      <button
-                        className={`customer-name${nameUnreadClass}`}
-                        type="button"
-                        onClick={() => void openCustomerContact(record)}
-                        title={latestPreview ? `New message: ${latestPreview}` : undefined}
-                      >
-                        {hasLine ? (
-                          <span
-                            className="customer-name__bell customer-name__bell--on customer-name__bell--line"
-                            aria-label="New LINE message"
+                      <div className="customer-name-row">
+                        {hasRemind ? (
+                          <button
+                            className="customer-name__bell customer-name__bell--on customer-name__bell--remind"
+                            type="button"
+                            onClick={() => toggleReminder(record)}
+                            title="Hide orange reminder"
+                            aria-label="Hide orange reminder"
                           >
                             <Bell size={14} strokeWidth={2.5} />
-                          </span>
+                          </button>
                         ) : null}
-                        {hasFacebook ? (
-                          <span
-                            className="customer-name__bell customer-name__bell--on"
-                            aria-label="New Facebook message"
-                          >
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        {!hasUnread ? (
-                          <span className="customer-name__bell" aria-hidden>
-                            <Bell size={14} strokeWidth={2.5} />
-                          </span>
-                        ) : null}
-                        <span className="customer-name__text">{record.customerName}</span>
-                        <ExternalLink size={13} />
-                      </button>
+                        <button
+                          className={`customer-name${nameUnreadClass}`}
+                          type="button"
+                          onClick={() => void openCustomerContact(record)}
+                          title={
+                            hasRemind
+                              ? "Check this customer again"
+                              : latestPreview
+                                ? `New message: ${latestPreview}`
+                                : undefined
+                          }
+                        >
+                          {hasLine ? (
+                            <span
+                              className="customer-name__bell customer-name__bell--on customer-name__bell--line"
+                              aria-label="New LINE message"
+                            >
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          {hasFacebook ? (
+                            <span
+                              className="customer-name__bell customer-name__bell--on"
+                              aria-label="New Facebook message"
+                            >
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          {!hasUnread && !hasRemind ? (
+                            <span className="customer-name__bell" aria-hidden>
+                              <Bell size={14} strokeWidth={2.5} />
+                            </span>
+                          ) : null}
+                          <span className="customer-name__text">{record.customerName}</span>
+                          <ExternalLink size={13} />
+                        </button>
+                      </div>
                     </td>
                     <td className="customer-table__amount">{statusLabel(record.amount)}</td>
                     <td>{statusLabel(record.deadline)}</td>
