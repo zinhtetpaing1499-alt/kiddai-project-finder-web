@@ -1316,6 +1316,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                 onClick={() => setDesigner(designerName)}
               >
                 {designerName}
+                {unread > 0 ? (
+                  <span className="designer-picker__bell" aria-label="New messages">
+                    <Bell size={11} strokeWidth={2.5} />
+                  </span>
+                ) : null}
                 {unread > 0 ? <span className="designer-picker__badge">{unread > 9 ? "9+" : unread}</span> : null}
               </button>
             );
@@ -1446,11 +1451,24 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                         onClick={() => void openCustomerContact(record)}
                         title={latestPreview ? `New message: ${latestPreview}` : undefined}
                       >
-                        {hasUnread ? (
+                        {hasLine ? (
+                          <span
+                            className="customer-name__bell customer-name__bell--on customer-name__bell--line"
+                            aria-label="New LINE message"
+                          >
+                            <Bell size={14} strokeWidth={2.5} />
+                          </span>
+                        ) : null}
+                        {hasFacebook ? (
                           <span
                             className="customer-name__bell customer-name__bell--on"
-                            aria-label="New message"
+                            aria-label="New Facebook message"
                           >
+                            <Bell size={14} strokeWidth={2.5} />
+                          </span>
+                        ) : null}
+                        {!hasUnread ? (
+                          <span className="customer-name__bell" aria-hidden>
                             <Bell size={14} strokeWidth={2.5} />
                           </span>
                         ) : null}

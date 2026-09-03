@@ -2607,6 +2607,18 @@ a {
   align-items: center;
   gap: 6px;
 }
+.designer-picker__bell {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #fffdf8;
+  background: #c62828;
+  box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.22);
+}
 .designer-picker__badge {
   display: inline-flex;
   min-width: 18px;
