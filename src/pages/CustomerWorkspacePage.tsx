@@ -411,11 +411,37 @@ function tabNotiBadge(count: number) {
   if (count <= 0) {
     return null;
   }
-  return (
-    <span className="customer-view-switch__notis">
-      <span className="customer-view-switch__noti">{formatNotiCount(count)}</span>
-    </span>
-  );
+  return <span className="customer-view-switch__noti">{formatNotiCount(count)}</span>;
+}
+
+function uniqueCustomerRecords(records: CustomerRecord[]) {
+  const seen = new Set<string>();
+  const unique: CustomerRecord[] = [];
+  for (const record of records) {
+    const key = `${record.projectNumber}\0${record.customerName}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(record);
+  }
+  return unique;
+}
+
+function recordsForDesignerAlerts(
+  mode: CustomerMode,
+  designerName: DesignerName,
+  currentDesigner: DesignerName,
+  currentRecords: CustomerRecord[],
+  finishedAll: CustomerRecord[],
+) {
+  const active =
+    designerName === currentDesigner ? currentRecords : (readCache(mode, designerName)?.records ?? []);
+  if (mode !== "deposit") {
+    return active;
+  }
+  const stage = finishedAll.filter((record) => matchDepositStageOwner(record.owner, designerName));
+  return uniqueCustomerRecords([...active, ...stage]);
 }
 
 export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
@@ -431,6 +457,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const [actionError, setActionError] = useState("");
   const [busyActionKey, setBusyActionKey] = useState("");
   const [reminderRevision, setReminderRevision] = useState(0);
+  const [designerCacheRevision, setDesignerCacheRevision] = useState(0);
   const [facebookNotifications, setFacebookNotifications] = useState<FacebookNotification[]>([]);
   const [lineNotifications, setLineNotifications] = useState<LineNotification[]>([]);
   const [pendingLocalFolderChoice, setPendingLocalFolderChoice] =
@@ -691,6 +718,50 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }, [depositView, designer, loadDesignerData, mode]);
 
   useEffect(() => {
+    if (connection.status !== "Connected") {
+      return;
+    }
+    const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+    if (!spreadsheetId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function prefetchOtherDesigners() {
+      for (const designerName of DESIGNERS) {
+        if (cancelled || designerName === designer) {
+          continue;
+        }
+        if ((readCache(mode, designerName)?.records.length ?? 0) > 0) {
+          continue;
+        }
+        try {
+          const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, designerName);
+          if (cancelled) {
+            return;
+          }
+          writeCache({
+            version: CUSTOMER_CACHE_VERSION,
+            mode,
+            designer: designerName,
+            fetchedAt: worksheetRows.fetchedAt,
+            records: parseDesignerCustomers(worksheetRows.rows, mode),
+          });
+          setDesignerCacheRevision((value) => value + 1);
+        } catch {
+          // Other designer lists stay empty until that tab is opened.
+        }
+      }
+    }
+
+    void prefetchOtherDesigners();
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.status, designer, mode]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function refreshMessagingNotifications() {
@@ -779,6 +850,22 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     void reminderRevision;
     return countDistinctCustomersWithAlert(mode, designer, records, messagingNotifications);
   }, [designer, messagingNotifications, mode, records, reminderRevision]);
+
+  const designerAlertCounts = useMemo(() => {
+    void reminderRevision;
+    void designerCacheRevision;
+    return Object.fromEntries(
+      DESIGNERS.map((designerName) => [
+        designerName,
+        countDistinctCustomersWithAlert(
+          mode,
+          designerName,
+          recordsForDesignerAlerts(mode, designerName, designer, records, finishedAll),
+          messagingNotifications,
+        ),
+      ]),
+    ) as Record<DesignerName, number>;
+  }, [designer, designerCacheRevision, finishedAll, messagingNotifications, mode, records, reminderRevision]);
 
   async function resolveTemplateSpreadsheetIds() {
     const memoryValue = templateIdsCacheRef.current;
@@ -1487,7 +1574,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         <div className="customer-workspace__chrome">
           <div className="designer-picker" aria-label="Designers">
             <div className="designer-picker__tabs">
-              {DESIGNERS.map((designerName) => (
+              {DESIGNERS.map((designerName) => {
+                const alertCount = designerAlertCounts[designerName] ?? 0;
+                return (
                 <button
                   key={designerName}
                   className={`designer-picker__tab${designer === designerName ? " designer-picker__tab--active" : ""}`}
@@ -1495,8 +1584,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   onClick={() => setDesigner(designerName)}
                 >
                   {designerName}
+                  {alertCount > 0 ? (
+                    <span className="designer-picker__badge" aria-label={`${alertCount} notifications`}>
+                      <Bell size={11} strokeWidth={2.6} />
+                      {formatNotiCount(alertCount)}
+                    </span>
+                  ) : null}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
 
