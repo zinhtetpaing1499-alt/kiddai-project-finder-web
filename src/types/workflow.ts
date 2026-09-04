@@ -19,6 +19,7 @@ export type WorkflowCell = {
   formula: string | null;
   links: WorkflowCellLink[];
   fill: WorkflowCellFill | null;
+  dropdownOptions: string[];
 };
 
 export type WorkflowWorksheetRows = {

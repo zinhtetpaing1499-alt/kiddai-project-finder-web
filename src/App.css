@@ -2638,19 +2638,18 @@ a {
   font-weight: 800;
   box-shadow: 0 1px 2px rgba(72, 57, 45, 0.08);
 }
-.designer-picker__badge {
+.designer-picker__bell {
   display: inline-flex;
   min-width: 18px;
   height: 18px;
+  flex: 0 0 18px;
   align-items: center;
   justify-content: center;
-  padding: 0 5px;
   border-radius: 999px;
   background: #c62828;
   color: #fffdf8;
-  font-size: 0.68rem;
-  font-weight: 800;
-  line-height: 1;
+  box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.22);
+  animation: customer-bell-pulse 1.6s ease-in-out infinite;
 }
 .customer-noti-pill {
   display: inline-flex;
@@ -2876,9 +2875,41 @@ a {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
+.customer-table-wrap--deposit { overflow-x: hidden; }
 .customer-table { width: 100%; border-collapse: separate; border-spacing: 0; color: var(--text-secondary); font-size: 0.92rem; }
-.customer-table--deposit { min-width: 1540px; }
+.customer-table--deposit {
+  min-width: 0;
+  table-layout: fixed;
+  font-size: 0.86rem;
+}
 .customer-table--selling { min-width: 1040px; }
+.customer-table--deposit-active .customer-col--project { width: 6.5%; }
+.customer-table--deposit-active .customer-col--name { width: 13.5%; }
+.customer-table--deposit-active .customer-col--amount { width: 7%; }
+.customer-table--deposit-active .customer-col--deadline { width: 7.5%; }
+.customer-table--deposit-active .customer-col--installation { width: 8%; }
+.customer-table--deposit-active .customer-col--wood { width: 7%; }
+.customer-table--deposit-active .customer-col--confirm { width: 5.5%; }
+.customer-table--deposit-active .customer-col--queue { width: 5.5%; }
+.customer-table--deposit-active .customer-col--qc { width: 4.5%; }
+.customer-table--deposit-active .customer-col--pieces { width: 5%; }
+.customer-table--deposit-active .customer-col--cnc { width: 7.5%; }
+.customer-table--deposit-active .customer-col--cnc-team { width: 7.5%; }
+.customer-table--deposit-active .customer-col--actions { width: 15%; }
+.customer-table--deposit-stage .customer-col--project { width: 6.5%; }
+.customer-table--deposit-stage .customer-col--name { width: 13.5%; }
+.customer-table--deposit-stage .customer-col--amount { width: 7%; }
+.customer-table--deposit-stage .customer-col--deadline { width: 7.5%; }
+.customer-table--deposit-stage .customer-col--installation { width: 8%; }
+.customer-table--deposit-stage .customer-col--finished { width: 8%; }
+.customer-table--deposit-stage .customer-col--wood { width: 7%; }
+.customer-table--deposit-stage .customer-col--confirm { width: 5.5%; }
+.customer-table--deposit-stage .customer-col--queue { width: 5.5%; }
+.customer-table--deposit-stage .customer-col--qc { width: 4.5%; }
+.customer-table--deposit-stage .customer-col--pieces { width: 5%; }
+.customer-table--deposit-stage .customer-col--cnc { width: 7.5%; }
+.customer-table--deposit-stage .customer-col--cnc-team { width: 7.5%; }
+.customer-table--deposit-stage .customer-col--actions { width: 7%; }
 .customer-table th {
   position: sticky;
   top: 0;
@@ -2900,6 +2931,20 @@ a {
   background: rgba(255, 253, 248, 0.96);
   vertical-align: middle;
   white-space: nowrap;
+}
+.customer-table--deposit th {
+  padding: 9px 6px;
+  line-height: 1.15;
+  white-space: normal;
+}
+.customer-table--deposit td {
+  padding: 9px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.customer-table--deposit .customer-name-row,
+.customer-table--deposit .customer-name {
+  max-width: 100%;
 }
 .customer-table tbody tr:nth-child(even) td { background: rgba(247, 241, 232, 0.45); }
 .customer-table tbody tr:hover td { background: #f8f0e5; }
@@ -2945,6 +2990,75 @@ a {
   font-weight: 700;
 }
 .customer-status--done { background: rgba(112, 138, 115, 0.13); color: #5b765f; }
+.customer-cell-toggle {
+  display: inline-flex;
+  min-width: 30px;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(84, 73, 63, 0.055);
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 700;
+}
+.customer-cell-toggle:hover:not(:disabled),
+.customer-cell-toggle:focus-visible {
+  border-color: var(--border-strong);
+  background: #fffaf3;
+  outline: none;
+}
+.customer-cell-toggle--yes {
+  background: rgba(112, 138, 115, 0.13);
+  color: #5b765f;
+}
+.customer-cell-toggle:disabled { cursor: wait; opacity: 0.6; }
+.customer-cell-input-wrap {
+  position: relative;
+  display: flex;
+  width: 100%;
+  align-items: center;
+}
+.customer-cell-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 5px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(84, 73, 63, 0.055);
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+}
+.customer-cell-input:hover,
+.customer-cell-input:focus {
+  border-color: var(--border-strong);
+  background: #fffaf3;
+  outline: none;
+}
+.customer-cell-input::placeholder { color: var(--text-muted); opacity: 1; }
+.customer-cell-select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 18px 4px 5px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background-color: rgba(112, 138, 115, 0.13);
+  color: #4f6f55;
+  font: inherit;
+  font-weight: 700;
+}
+.customer-cell-select:hover,
+.customer-cell-select:focus {
+  border-color: var(--border-strong);
+  background-color: #fffaf3;
+  outline: none;
+}
 .customer-table__actions-heading,
 .customer-table__actions {
   right: 0;
@@ -2967,6 +3081,18 @@ a {
 }
 .customer-table tbody tr:hover .customer-table__actions {
   background: #f8f0e5;
+}
+.customer-table--deposit .customer-table__actions-heading,
+.customer-table--deposit .customer-table__actions {
+  position: static;
+  box-shadow: none;
+}
+.customer-table--deposit .customer-actions { gap: 4px; }
+.customer-table--deposit .customer-action {
+  min-height: 28px;
+  gap: 4px;
+  padding: 4px 7px;
+  font-size: 0.76rem;
 }
 .customer-actions { display: flex; align-items: center; gap: 5px; }
 .customer-action {
@@ -3038,6 +3164,79 @@ a {
 @media (max-width: 1420px) {
   .designer-picker { align-items: flex-start; flex-direction: column; }
   .designer-picker__tabs { width: 100%; justify-content: flex-start; }
+}
+
+@media (max-width: 1180px) {
+  .customer-table-wrap--deposit {
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+    border-top: 0;
+  }
+  .customer-table--deposit,
+  .customer-table--deposit tbody {
+    display: block;
+    width: 100%;
+  }
+  .customer-table--deposit colgroup,
+  .customer-table--deposit thead {
+    display: none;
+  }
+  .customer-table--deposit tbody {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 10px;
+    padding: 10px;
+  }
+  .customer-table--deposit tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #fffdf8;
+  }
+  .customer-table--deposit td,
+  .customer-table--deposit tbody tr:nth-child(even) td,
+  .customer-table--deposit tbody tr:hover td {
+    display: grid;
+    min-height: 45px;
+    grid-template-columns: minmax(82px, 0.8fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    overflow: visible;
+    border-bottom: 1px solid rgba(84, 73, 63, 0.07);
+    background: transparent;
+    white-space: normal;
+  }
+  .customer-table--deposit td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .customer-table--deposit .customer-table__actions {
+    grid-column: 1 / -1;
+  }
+  .customer-table--deposit .customer-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .customer-table--deposit .customer-cell-input,
+  .customer-table--deposit .customer-cell-select {
+    max-width: 150px;
+    justify-self: end;
+  }
+  .customer-table--deposit .customer-status,
+  .customer-table--deposit .customer-cell-toggle,
+  .customer-table--deposit .customer-project-number,
+  .customer-table--deposit .customer-name-row {
+    justify-self: end;
+  }
 }
 
 .queue-result {
@@ -3136,6 +3335,91 @@ a {
   .customer-list-toolbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell__content { padding: 6px; }
+  .app-shell__main { padding: 10px 8px 18px; }
+  .app-shell__frame { border-radius: 12px; }
+  .app-shell__header { min-height: 60px; padding-right: 12px; }
+
+  .designer-picker { padding: 8px; }
+  .designer-picker__tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .designer-picker__tabs::-webkit-scrollbar { display: none; }
+  .designer-picker__tab { padding: 7px 10px; }
+  .customer-list-toolbar { gap: 10px; padding: 9px 10px 11px; }
+  .customer-list-toolbar__title-row { width: 100%; }
+  .customer-view-switch--stage {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-left: 0;
+  }
+  .customer-view-switch__tab {
+    min-width: 0;
+    padding: 6px 7px;
+    font-size: 0.76rem;
+    white-space: normal;
+  }
+  .customer-search { margin: 0 10px 10px; padding: 9px 10px; }
+  .customer-notice { margin: 0 10px 10px; }
+  .customer-table--deposit tbody { grid-template-columns: 1fr; padding: 8px; }
+
+  .customer-table-wrap--selling {
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+    border-top: 0;
+  }
+  .customer-table--selling,
+  .customer-table--selling tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+  .customer-table--selling thead { display: none; }
+  .customer-table--selling tbody { display: grid; gap: 8px; padding: 8px; }
+  .customer-table--selling tbody tr {
+    display: grid;
+    grid-template-columns: 1fr;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #fffdf8;
+  }
+  .customer-table--selling td,
+  .customer-table--selling tbody tr:nth-child(even) td,
+  .customer-table--selling tbody tr:hover td {
+    display: grid;
+    min-height: 44px;
+    grid-template-columns: 110px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-bottom: 1px solid rgba(84, 73, 63, 0.07);
+    background: transparent;
+    white-space: normal;
+  }
+  .customer-table--selling td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .customer-table--selling .customer-table__actions {
+    position: static;
+    box-shadow: none;
+  }
+  .customer-table--selling .customer-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }
 

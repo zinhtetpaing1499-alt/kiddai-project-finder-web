@@ -14,9 +14,19 @@ const FALLBACK_COLUMNS = {
   queueNumber: 10,
   qc: 11,
   pieces: 12,
-  sendCnc: 7,
+  sendCnc: 14,
+  cncTeam: 15,
   finished: 13,
 };
+
+export type DepositStageEditableField =
+  | "woodColor"
+  | "confirmation"
+  | "queueNumber"
+  | "qc"
+  | "pieces"
+  | "sendCnc"
+  | "cncTeam";
 
 export type DepositStageRecord = {
   id: string;
@@ -34,11 +44,12 @@ export type DepositStageRecord = {
   qc: string;
   pieces: string;
   sendCnc: string;
+  cncTeam: string;
   finishedAt: string;
 };
 
 function getCell(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
-  return rows[rowIndex]?.[columnIndex] ?? { text: "", formula: null, links: [], fill: null };
+  return rows[rowIndex]?.[columnIndex] ?? { text: "", formula: null, links: [], fill: null, dropdownOptions: [] };
 }
 
 function getCellText(rows: WorkflowCell[][], rowIndex: number, columnIndex: number) {
@@ -130,6 +141,101 @@ export function resolveDepositStageWorksheetName(worksheetNames: string[]) {
   );
 }
 
+function columnIndexToA1(columnIndex: number) {
+  let value = columnIndex + 1;
+  let label = "";
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    label = String.fromCharCode(65 + remainder) + label;
+    value = Math.floor((value - 1) / 26);
+  }
+  return label;
+}
+
+export function resolveDepositStageEditTarget(
+  rows: WorkflowCell[][],
+  projectNumber: string,
+  field: DepositStageEditableField,
+) {
+  const headerRow = findHeaderRow(rows);
+  const projectColumn =
+    headerRow >= 0 ? findColumn(rows, headerRow, ["project"]) : FALLBACK_COLUMNS.project;
+  const resolvedProjectColumn = projectColumn >= 0 ? projectColumn : FALLBACK_COLUMNS.project;
+  const fieldColumns: Record<DepositStageEditableField, number> = {
+    woodColor: headerRow >= 0 ? findColumn(rows, headerRow, ["color", "สีไม้"]) : -1,
+    confirmation:
+      headerRow >= 0 ? findColumn(rows, headerRow, ["confirm", "คอนเฟิร์ม"]) : -1,
+    queueNumber: headerRow >= 0 ? findColumn(rows, headerRow, ["que", "queue", "คิว"]) : -1,
+    qc: headerRow >= 0 ? findColumn(rows, headerRow, ["qc"]) : -1,
+    pieces: headerRow >= 0 ? findColumn(rows, headerRow, ["pieces", "จำนวน"]) : -1,
+    sendCnc: headerRow >= 0 ? findColumn(rows, headerRow, ["send cnc", "cnc", "ส่งฝ่าย cnc"]) : -1,
+    cncTeam: headerRow >= 0 ? findColumn(rows, headerRow, ["ช่าง cnc", "cnc team", "team cnc"]) : -1,
+  };
+  const columnIndex =
+    fieldColumns[field] >= 0 ? fieldColumns[field] : FALLBACK_COLUMNS[field];
+  const normalizedProject = projectNumber.trim();
+  const startRow = headerRow >= 0 ? headerRow + 1 : 0;
+  const rowIndex = rows.findIndex(
+    (row, index) =>
+      index >= startRow &&
+      (row[resolvedProjectColumn]?.text ?? "").trim() === normalizedProject,
+  );
+
+  if (rowIndex < 0) {
+    return null;
+  }
+  return {
+    worksheetRow: rowIndex + 1,
+    columnIndex,
+    cellAddress: `${columnIndexToA1(columnIndex)}${rowIndex + 1}`,
+  };
+}
+
+export function readDepositStageProjectValues(
+  rows: WorkflowCell[][],
+  projectNumber: string,
+) {
+  const fields: DepositStageEditableField[] = [
+    "woodColor",
+    "confirmation",
+    "queueNumber",
+    "qc",
+    "pieces",
+    "sendCnc",
+    "cncTeam",
+  ];
+  const targets = fields.map((field) => ({
+    field,
+    target: resolveDepositStageEditTarget(rows, projectNumber, field),
+  }));
+  const firstTarget = targets[0]?.target;
+  if (!firstTarget) {
+    return null;
+  }
+
+  return Object.fromEntries(
+    targets.map(({ field, target }) => [
+      field,
+      target ? getCellText(rows, target.worksheetRow - 1, target.columnIndex) : "",
+    ]),
+  ) as Record<DepositStageEditableField, string>;
+}
+
+export function readDepositStageCncTeamOptions(rows: WorkflowCell[][]) {
+  const headerRow = findHeaderRow(rows);
+  const detectedColumn =
+    headerRow >= 0
+      ? findColumn(rows, headerRow, ["ช่าง cnc", "cnc team", "team cnc"])
+      : -1;
+  const columnIndex = detectedColumn >= 0 ? detectedColumn : FALLBACK_COLUMNS.cncTeam;
+  const validationOptions = rows.flatMap(
+    (row) => row[columnIndex]?.dropdownOptions ?? [],
+  );
+  // The sheet's validation rule is authoritative. Existing cells can contain
+  // old names that are no longer valid choices and must not expand the menu.
+  return [...new Set(validationOptions.map((value) => value.trim()).filter(Boolean))];
+}
+
 export function parseDepositStageFinished(
   rows: WorkflowCell[][],
   worksheetName: string,
@@ -152,7 +258,9 @@ export function parseDepositStageFinished(
     pieces:
       headerRow >= 0 ? findColumn(rows, headerRow, ["pieces", "จำนวน"]) : -1,
     sendCnc:
-      headerRow >= 0 ? findColumn(rows, headerRow, ["cnc", "ส่งพวง", "พวงไม้"]) : -1,
+      headerRow >= 0 ? findColumn(rows, headerRow, ["send cnc", "cnc", "ส่งฝ่าย cnc"]) : -1,
+    cncTeam:
+      headerRow >= 0 ? findColumn(rows, headerRow, ["ช่าง cnc", "cnc team", "team cnc"]) : -1,
     finished:
       headerRow >= 0 ? findColumn(rows, headerRow, ["finished", "เสร็จ"]) : -1,
   };
@@ -171,6 +279,7 @@ export function parseDepositStageFinished(
   const qcColumn = columns.qc >= 0 ? columns.qc : FALLBACK_COLUMNS.qc;
   const piecesColumn = columns.pieces >= 0 ? columns.pieces : FALLBACK_COLUMNS.pieces;
   const sendCncColumn = columns.sendCnc >= 0 ? columns.sendCnc : FALLBACK_COLUMNS.sendCnc;
+  const cncTeamColumn = columns.cncTeam >= 0 ? columns.cncTeam : FALLBACK_COLUMNS.cncTeam;
   const finishedColumn = columns.finished >= 0 ? columns.finished : FALLBACK_COLUMNS.finished;
 
   const startRow = headerRow >= 0 ? headerRow + 1 : 0;
@@ -205,6 +314,7 @@ export function parseDepositStageFinished(
       qc: getCellText(rows, rowIndex, qcColumn),
       pieces: getCellText(rows, rowIndex, piecesColumn),
       sendCnc: getCellText(rows, rowIndex, sendCncColumn),
+      cncTeam: getCellText(rows, rowIndex, cncTeamColumn),
       finishedAt,
     });
   }

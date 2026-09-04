@@ -51,7 +51,7 @@ function tryReadOAuthClient() {
 const LIVE_GOOGLE_API_ORIGIN =
   process.env.KIDDAI_LIVE_GOOGLE_API?.trim() || "https://kiddai.netlify.app";
 
-async function proxyGoogleAuthToLiveSite(req: IncomingMessage, res: ServerResponse) {
+async function proxyApiToLiveSite(req: IncomingMessage, res: ServerResponse) {
   const pathAndQuery = req.url ?? "/";
   const target = `${LIVE_GOOGLE_API_ORIGIN}${pathAndQuery}`;
   const headers: Record<string, string> = {};
@@ -96,15 +96,24 @@ function googleAuthApiPlugin(): Plugin {
     name: "kiddai-google-auth-api",
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith("/api/google/")) {
+        const isGoogleApi = req.url?.startsWith("/api/google/");
+        const isMessagingApi =
+          req.url?.startsWith("/api/facebook/") || req.url?.startsWith("/api/line/");
+
+        if (!isGoogleApi && !isMessagingApi) {
           next();
           return;
         }
 
         try {
+          if (isMessagingApi) {
+            await proxyApiToLiveSite(req, res);
+            return;
+          }
+
           const oauth = tryReadOAuthClient();
           if (!oauth) {
-            await proxyGoogleAuthToLiveSite(req, res);
+            await proxyApiToLiveSite(req, res);
             return;
           }
 

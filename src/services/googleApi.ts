@@ -70,6 +70,11 @@ type SheetGridCell = {
     backgroundColor?: SheetGridColor;
     backgroundColorStyle?: { rgbColor?: SheetGridColor };
   };
+  dataValidation?: {
+    condition?: {
+      values?: Array<{ userEnteredValue?: string }>;
+    };
+  };
 };
 
 type SheetGridResponse = {
@@ -265,7 +270,11 @@ function buildWorkflowCell(cell: SheetGridCell): WorkflowCell {
     }
   }
 
-  return { text, formula, links, fill: readCellFill(cell) };
+  const dropdownOptions = (cell.dataValidation?.condition?.values ?? [])
+    .map((item) => item.userEnteredValue?.trim() ?? "")
+    .filter((value) => value && !value.startsWith("="));
+
+  return { text, formula, links, fill: readCellFill(cell), dropdownOptions };
 }
 
 function buildWorkflowRows(payload: SheetGridResponse): WorkflowCell[][] {
@@ -278,6 +287,7 @@ async function googleFetch<T>(url: string, init?: RequestInit, retried = false):
   const accessToken = await getValidAccessToken(retried);
   const response = await fetch(url, {
     ...init,
+    cache: init?.cache ?? "no-store",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
@@ -646,7 +656,7 @@ export async function fetchWorkflowWorksheetRows(
 ): Promise<WorkflowWorksheetRows> {
   const encodedRange = encodeURIComponent(worksheetName.trim());
   const fields = encodeURIComponent(
-    "sheets.data.rowData.values(formattedValue,hyperlink,userEnteredValue,textFormatRuns.format.link.uri,effectiveFormat.backgroundColor,effectiveFormat.backgroundColorStyle,userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle)",
+    "sheets.data.rowData.values(formattedValue,hyperlink,userEnteredValue,textFormatRuns.format.link.uri,effectiveFormat.backgroundColor,effectiveFormat.backgroundColorStyle,userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle,dataValidation.condition.values.userEnteredValue)",
   );
   const payload = await googleFetch<SheetGridResponse>(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId.trim()}?includeGridData=true&ranges=${encodedRange}&fields=${fields}`,
@@ -657,6 +667,43 @@ export async function fetchWorkflowWorksheetRows(
     rows: buildWorkflowRows(payload),
     fetchedAt: new Date().toISOString(),
   };
+}
+
+export async function updateWorkflowWorksheetCell(
+  spreadsheetId: string,
+  worksheetName: string,
+  cellAddress: string,
+  value: string,
+) {
+  const escapedWorksheetName = worksheetName.trim().replace(/'/gu, "''");
+  const range = `'${escapedWorksheetName}'!${cellAddress.trim().toUpperCase()}`;
+  const encodedRange = encodeURIComponent(range);
+  const baseUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId.trim()}/values/${encodedRange}`;
+
+  if (!value.trim()) {
+    await googleFetch(`${baseUrl}:clear`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    return "";
+  }
+
+  const response = await googleFetch<{
+    updatedData?: { values?: Array<Array<string | number | boolean>> };
+  }>(
+    `${baseUrl}?valueInputOption=USER_ENTERED&includeValuesInResponse=true&responseValueRenderOption=FORMATTED_VALUE`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        range,
+        majorDimension: "ROWS",
+        values: [[value]],
+      }),
+    },
+  );
+
+  const updatedValue = response.updatedData?.values?.[0]?.[0];
+  return updatedValue === undefined || updatedValue === null ? value : String(updatedValue);
 }
 
 export async function fetchSpreadsheetMetadata(spreadsheetId: string) {
