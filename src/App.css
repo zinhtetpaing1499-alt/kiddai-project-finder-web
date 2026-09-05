@@ -3166,7 +3166,9 @@ a {
   .designer-picker__tabs { width: 100%; justify-content: flex-start; }
 }
 
-@media (max-width: 1180px) {
+/* Fourteen workflow columns become too cramped on typical laptops once the
+   sidebar is included. Use the compact card layout before that happens. */
+@media (max-width: 1500px) {
   .customer-table-wrap--deposit {
     max-height: none;
     min-height: 0;

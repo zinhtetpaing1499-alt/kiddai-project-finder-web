@@ -533,7 +533,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const [queueFolderResult, setQueueFolderResult] = useState<QueueFolderResultNotice | null>(null);
   const [queueInput, setQueueInput] = useState("");
   const [cellDrafts, setCellDrafts] = useState<Record<string, string>>({});
-  const [cncTeamOptions, setCncTeamOptions] = useState<string[]>([]);
   const requestSequenceRef = useRef(0);
   const requestsInFlightRef = useRef(new Set<string>());
   const designerRefreshFailuresRef = useRef(0);
@@ -573,7 +572,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         loadedAt: Date.now(),
       };
       depositStageSnapshotRef.current = snapshot;
-      setCncTeamOptions(readDepositStageCncTeamOptions(worksheetRows.rows));
       return snapshot;
     })();
 
@@ -804,7 +802,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
           rows: worksheetRows.rows,
           loadedAt: Date.now(),
         };
-        setCncTeamOptions(readDepositStageCncTeamOptions(worksheetRows.rows));
         const nextPayload: FinishedCachePayload = {
           version: FINISHED_CACHE_VERSION,
           fetchedAt: worksheetRows.fetchedAt,
@@ -1827,9 +1824,12 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }
 
   function editableCncTeamCell(record: CustomerRecord) {
-    const options = record.cncTeam && !cncTeamOptions.includes(record.cncTeam)
-      ? [record.cncTeam, ...cncTeamOptions]
-      : cncTeamOptions;
+    const options = depositStageSnapshotRef.current
+      ? readDepositStageCncTeamOptions(
+          depositStageSnapshotRef.current.rows,
+          record.projectNumber,
+        )
+      : [];
     return (
       <td key="cncTeam" data-label="ช่าง CNC">
         <select

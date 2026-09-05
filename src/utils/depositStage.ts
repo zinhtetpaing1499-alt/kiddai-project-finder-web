@@ -221,18 +221,21 @@ export function readDepositStageProjectValues(
   ) as Record<DepositStageEditableField, string>;
 }
 
-export function readDepositStageCncTeamOptions(rows: WorkflowCell[][]) {
-  const headerRow = findHeaderRow(rows);
-  const detectedColumn =
-    headerRow >= 0
-      ? findColumn(rows, headerRow, ["ช่าง cnc", "cnc team", "team cnc"])
-      : -1;
-  const columnIndex = detectedColumn >= 0 ? detectedColumn : FALLBACK_COLUMNS.cncTeam;
-  const validationOptions = rows.flatMap(
-    (row) => row[columnIndex]?.dropdownOptions ?? [],
-  );
-  // The sheet's validation rule is authoritative. Existing cells can contain
-  // old names that are no longer valid choices and must not expand the menu.
+export function readDepositStageCncTeamOptions(
+  rows: WorkflowCell[][],
+  projectNumber: string,
+) {
+  const target = resolveDepositStageEditTarget(rows, projectNumber, "cncTeam");
+  if (!target) {
+    return [];
+  }
+  const validationOptions = getCell(
+    rows,
+    target.worksheetRow - 1,
+    target.columnIndex,
+  ).dropdownOptions;
+  // Use only this project's validation rule. Combining rules from every row
+  // exposes obsolete team names that are not choices in the selected Sheet cell.
   return [...new Set(validationOptions.map((value) => value.trim()).filter(Boolean))];
 }
 
