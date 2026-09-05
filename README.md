@@ -24,30 +24,24 @@ Browser version of KIDDAI Workspace. Same main workflows as the Tauri desktop ap
 
 ## Setup
 
-1. Make sure the desktop OAuth file exists (reused by the web app):
-
-```text
-src-tauri/secrets/google-oauth-client.json
-```
-
-2. Optional env override:
+1. From this repo root (there is no inner `web` folder):
 
 ```bash
-cd web
-cp .env.example .env
-```
-
-3. Install and run from the **web** folder:
-
-```bash
-cd web
 npm install
 npm run dev
 ```
 
 Open `http://localhost:5173`.
 
-4. In Settings, click **Connect Google**. The browser redirects to Google and returns to the app.
+2. Google on localhost: if you do not have the desktop OAuth JSON, `npm run dev` reuses the live site’s Google token API (`kiddai.netlify.app`). Production is unchanged.
+
+   Optional local file instead:
+
+```text
+secrets/google-oauth-client.json
+```
+
+3. In Settings, click **Connect Google**. The browser redirects to Google and returns to the app.
 
 ## First-time Settings (required for everything to work)
 
@@ -60,7 +54,7 @@ Open `http://localhost:5173`.
 4. **Kiddai2 folder** (Selling): paste Kiddai2 Shared Drive folder URL → **Verify & Save Kiddai2**
 
 Important:
-- Always run `npm run dev` inside `web/`
+- Run `npm run dev` from this repo root (do not `cd web`)
 - Deposit does **not** need one pasted Shared Drive link for all projects
 - Use the Google account that is a member of those Shared drives
 
@@ -70,7 +64,7 @@ Important:
 npm run build
 ```
 
-Deploy the **`web/`** folder to Netlify (not the parent desktop app folder).
+Deploy this repo to Netlify.
 
 See [DEPLOY.md](./DEPLOY.md) for Netlify settings, env vars, and Google redirect URIs.
 
