@@ -79,6 +79,7 @@ type SheetGridCell = {
 
 type SheetGridResponse = {
   sheets?: Array<{
+    properties?: { title?: string };
     data?: Array<{
       rowData?: Array<{
         values?: SheetGridCell[];
@@ -279,6 +280,12 @@ function buildWorkflowCell(cell: SheetGridCell): WorkflowCell {
 
 function buildWorkflowRows(payload: SheetGridResponse): WorkflowCell[][] {
   return (payload.sheets?.[0]?.data ?? []).flatMap((data) =>
+    (data.rowData ?? []).map((row) => (row.values ?? []).map(buildWorkflowCell)),
+  );
+}
+
+function buildWorkflowSheetRows(sheet: NonNullable<SheetGridResponse["sheets"]>[number]) {
+  return (sheet.data ?? []).flatMap((data) =>
     (data.rowData ?? []).map((row) => (row.values ?? []).map(buildWorkflowCell)),
   );
 }
@@ -667,6 +674,31 @@ export async function fetchWorkflowWorksheetRows(
     rows: buildWorkflowRows(payload),
     fetchedAt: new Date().toISOString(),
   };
+}
+
+export async function fetchWorkflowWorksheetsRows(
+  spreadsheetId: string,
+  worksheetNames: string[],
+): Promise<WorkflowWorksheetRows[]> {
+  const names = [...new Set(worksheetNames.map((name) => name.trim()).filter(Boolean))];
+  if (names.length === 0) {
+    return [];
+  }
+
+  const ranges = names.map((name) => `ranges=${encodeURIComponent(name)}`).join("&");
+  const fields = encodeURIComponent(
+    "sheets(properties(title),data.rowData.values(formattedValue,hyperlink,userEnteredValue,textFormatRuns.format.link.uri,effectiveFormat.backgroundColor,effectiveFormat.backgroundColorStyle,userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle,dataValidation.condition.values.userEnteredValue))",
+  );
+  const payload = await googleFetch<SheetGridResponse>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId.trim()}?includeGridData=true&${ranges}&fields=${fields}`,
+  );
+  const fetchedAt = new Date().toISOString();
+
+  return (payload.sheets ?? []).map((sheet, index) => ({
+    worksheetName: sheet.properties?.title?.trim() || names[index],
+    rows: buildWorkflowSheetRows(sheet),
+    fetchedAt,
+  }));
 }
 
 export async function updateWorkflowWorksheetCell(

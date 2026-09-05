@@ -144,6 +144,12 @@ a {
   margin: 0 auto;
 }
 
+.app-shell__main:has(.customer-workspace) {
+  width: 100%;
+  max-width: none;
+  padding: 12px 12px 20px;
+}
+
 .status-bar {
   display: flex;
   align-items: center;
@@ -2590,7 +2596,7 @@ a {
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
-  padding: 10px 12px 8px;
+  padding: 8px 10px 7px;
   border: 0;
   border-bottom: 1px solid rgba(84, 73, 63, 0.06);
   background: transparent;
@@ -2693,6 +2699,7 @@ a {
   color: transparent;
   background: transparent;
   visibility: hidden;
+  order: 3;
 }
 .customer-name__bell--on {
   visibility: visible;
@@ -2730,7 +2737,7 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 10px 16px 12px;
+  padding: 9px 12px 10px;
 }
 .customer-list-toolbar__title-row {
   display: flex;
@@ -2853,8 +2860,8 @@ a {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 0 16px 14px;
-  padding: 10px 12px;
+  margin: 0 12px 10px;
+  padding: 9px 11px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #fffdf8;
@@ -2864,7 +2871,7 @@ a {
 .customer-search:focus-within { border-color: var(--border-strong); box-shadow: 0 0 0 3px rgba(84, 73, 63, 0.06); }
 .customer-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-size: 0.98rem; }
 .customer-search button { padding: 2px 4px; border: 0; background: transparent; color: var(--text-muted); font-size: 0.78rem; font-weight: 700; }
-.customer-notice { margin: 0 18px 12px; padding: 9px 12px; border-radius: 9px; font-size: 0.84rem; }
+.customer-notice { margin: 0 12px 10px; padding: 9px 12px; border-radius: 9px; font-size: 0.84rem; }
 .customer-notice--success { background: rgba(112, 138, 115, 0.11); color: #527059; }
 .customer-notice--warning { background: rgba(172, 123, 61, 0.1); color: #805f37; }
 .customer-notice--error { background: rgba(171, 78, 67, 0.09); color: #914f47; }
@@ -2880,36 +2887,38 @@ a {
 .customer-table--deposit {
   min-width: 0;
   table-layout: fixed;
-  font-size: 0.86rem;
+  font-size: 0.9rem;
 }
-.customer-table--selling { min-width: 1040px; }
+.customer-table--selling {
+  min-width: 0;
+}
 .customer-table--deposit-active .customer-col--project { width: 6.5%; }
-.customer-table--deposit-active .customer-col--name { width: 13.5%; }
+.customer-table--deposit-active .customer-col--name { width: 14.5%; }
 .customer-table--deposit-active .customer-col--amount { width: 7%; }
 .customer-table--deposit-active .customer-col--deadline { width: 7.5%; }
 .customer-table--deposit-active .customer-col--installation { width: 8%; }
-.customer-table--deposit-active .customer-col--wood { width: 7%; }
-.customer-table--deposit-active .customer-col--confirm { width: 5.5%; }
-.customer-table--deposit-active .customer-col--queue { width: 5.5%; }
-.customer-table--deposit-active .customer-col--qc { width: 4.5%; }
+.customer-table--deposit-active .customer-col--wood { width: 6%; }
+.customer-table--deposit-active .customer-col--confirm { width: 5%; }
+.customer-table--deposit-active .customer-col--queue { width: 5%; }
+.customer-table--deposit-active .customer-col--qc { width: 4%; }
 .customer-table--deposit-active .customer-col--pieces { width: 5%; }
 .customer-table--deposit-active .customer-col--cnc { width: 7.5%; }
-.customer-table--deposit-active .customer-col--cnc-team { width: 7.5%; }
-.customer-table--deposit-active .customer-col--actions { width: 15%; }
-.customer-table--deposit-stage .customer-col--project { width: 6.5%; }
-.customer-table--deposit-stage .customer-col--name { width: 13.5%; }
-.customer-table--deposit-stage .customer-col--amount { width: 7%; }
-.customer-table--deposit-stage .customer-col--deadline { width: 7.5%; }
-.customer-table--deposit-stage .customer-col--installation { width: 8%; }
-.customer-table--deposit-stage .customer-col--finished { width: 8%; }
-.customer-table--deposit-stage .customer-col--wood { width: 7%; }
-.customer-table--deposit-stage .customer-col--confirm { width: 5.5%; }
-.customer-table--deposit-stage .customer-col--queue { width: 5.5%; }
-.customer-table--deposit-stage .customer-col--qc { width: 4.5%; }
-.customer-table--deposit-stage .customer-col--pieces { width: 5%; }
-.customer-table--deposit-stage .customer-col--cnc { width: 7.5%; }
-.customer-table--deposit-stage .customer-col--cnc-team { width: 7.5%; }
-.customer-table--deposit-stage .customer-col--actions { width: 7%; }
+.customer-table--deposit-active .customer-col--cnc-team { width: 7%; }
+.customer-table--deposit-active .customer-col--actions { width: 17%; }
+.customer-table--deposit-stage .customer-col--project { width: 6%; }
+.customer-table--deposit-stage .customer-col--name { width: 12.5%; }
+.customer-table--deposit-stage .customer-col--amount { width: 6.5%; }
+.customer-table--deposit-stage .customer-col--deadline { width: 7%; }
+.customer-table--deposit-stage .customer-col--installation { width: 7%; }
+.customer-table--deposit-stage .customer-col--finished { width: 7%; }
+.customer-table--deposit-stage .customer-col--wood { width: 5.5%; }
+.customer-table--deposit-stage .customer-col--confirm { width: 4.5%; }
+.customer-table--deposit-stage .customer-col--queue { width: 4.5%; }
+.customer-table--deposit-stage .customer-col--qc { width: 4%; }
+.customer-table--deposit-stage .customer-col--pieces { width: 4.5%; }
+.customer-table--deposit-stage .customer-col--cnc { width: 7%; }
+.customer-table--deposit-stage .customer-col--cnc-team { width: 7%; }
+.customer-table--deposit-stage .customer-col--actions { width: 17%; }
 .customer-table th {
   position: sticky;
   top: 0;
@@ -2918,7 +2927,7 @@ a {
   border-bottom: 1px solid var(--border-strong);
   background: #f5ede1;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 800;
   letter-spacing: 0.05em;
   text-align: left;
@@ -2933,12 +2942,12 @@ a {
   white-space: nowrap;
 }
 .customer-table--deposit th {
-  padding: 9px 6px;
+  padding: 9px 5px;
   line-height: 1.15;
   white-space: normal;
 }
 .customer-table--deposit td {
-  padding: 9px 6px;
+  padding: 9px 5px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -2982,7 +2991,7 @@ a {
 .customer-status {
   display: inline-flex;
   min-width: 30px;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 4px 7px;
   border-radius: 8px;
   background: rgba(84, 73, 63, 0.055);
@@ -2995,7 +3004,7 @@ a {
   min-width: 30px;
   min-height: 30px;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 4px 7px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -3032,7 +3041,35 @@ a {
   color: var(--text-secondary);
   font: inherit;
   font-weight: 700;
+  text-align: left;
+}
+.customer-cell-input:not([type="date"]) {
   text-align: center;
+}
+.customer-cell-input--date-display {
+  padding-right: 24px;
+  font-size: 0.76rem;
+  font-weight: 650;
+  text-align: center;
+}
+.customer-cell-date-icon {
+  position: absolute;
+  right: 7px;
+  z-index: 1;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+.customer-cell-date-picker {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 .customer-cell-input:hover,
 .customer-cell-input:focus {
@@ -3052,6 +3089,8 @@ a {
   color: #4f6f55;
   font: inherit;
   font-weight: 700;
+  text-align: center;
+  text-align-last: center;
 }
 .customer-cell-select:hover,
 .customer-cell-select:focus {
@@ -3088,11 +3127,24 @@ a {
   box-shadow: none;
 }
 .customer-table--deposit .customer-actions { gap: 4px; }
+.customer-table--deposit-active .customer-actions {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.75fr) minmax(0, 1fr);
+}
 .customer-table--deposit .customer-action {
+  width: 100%;
+  min-width: 0;
   min-height: 28px;
   gap: 4px;
   padding: 4px 7px;
-  font-size: 0.76rem;
+  font-size: 0.8rem;
+}
+.customer-action__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .customer-actions { display: flex; align-items: center; gap: 5px; }
 .customer-action {
@@ -3166,9 +3218,50 @@ a {
   .designer-picker__tabs { width: 100%; justify-content: flex-start; }
 }
 
-/* Fourteen workflow columns become too cramped on typical laptops once the
-   sidebar is included. Use the compact card layout before that happens. */
-@media (max-width: 1500px) {
+@media (max-width: 1500px) and (min-width: 901px) {
+  .customer-table--deposit { font-size: 0.82rem; }
+  .customer-table--deposit th,
+  .customer-table--deposit td {
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+  .customer-table--deposit .customer-action {
+    width: 30px;
+    padding: 4px;
+    justify-self: center;
+  }
+  .customer-table--deposit-active .customer-actions {
+    grid-template-columns: repeat(3, 30px);
+    justify-content: start;
+  }
+  .customer-table--deposit .customer-action__label { display: none; }
+}
+
+@media (max-width: 1500px) and (min-width: 901px) {
+  .customer-table--selling { font-size: 0.82rem; }
+  .customer-table--selling th,
+  .customer-table--selling td {
+    padding-right: 7px;
+    padding-left: 7px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .customer-table--selling .customer-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 30px);
+    gap: 4px;
+  }
+  .customer-table--selling .customer-action {
+    width: 30px;
+    min-width: 0;
+    padding: 4px;
+  }
+  .customer-table--selling .customer-action__label { display: none; }
+}
+
+/* On genuinely small screens, every field stays visible in a readable card;
+   the table never requires horizontal scrolling. */
+@media (max-width: 900px) {
   .customer-table-wrap--deposit {
     max-height: none;
     min-height: 0;
@@ -3326,6 +3419,10 @@ a {
     padding: 16px 14px 24px;
   }
 
+  .app-shell__main:has(.customer-workspace) {
+    padding: 12px 10px 20px;
+  }
+
   .app-shell__frame {
     min-height: calc(100vh - 24px);
   }
@@ -3338,39 +3435,6 @@ a {
     flex-direction: column;
     align-items: flex-start;
   }
-}
-
-@media (max-width: 760px) {
-  .app-shell__content { padding: 6px; }
-  .app-shell__main { padding: 10px 8px 18px; }
-  .app-shell__frame { border-radius: 12px; }
-  .app-shell__header { min-height: 60px; padding-right: 12px; }
-
-  .designer-picker { padding: 8px; }
-  .designer-picker__tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .designer-picker__tabs::-webkit-scrollbar { display: none; }
-  .designer-picker__tab { padding: 7px 10px; }
-  .customer-list-toolbar { gap: 10px; padding: 9px 10px 11px; }
-  .customer-list-toolbar__title-row { width: 100%; }
-  .customer-view-switch--stage {
-    display: grid;
-    width: 100%;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    margin-left: 0;
-  }
-  .customer-view-switch__tab {
-    min-width: 0;
-    padding: 6px 7px;
-    font-size: 0.76rem;
-    white-space: normal;
-  }
-  .customer-search { margin: 0 10px 10px; padding: 9px 10px; }
-  .customer-notice { margin: 0 10px 10px; }
-  .customer-table--deposit tbody { grid-template-columns: 1fr; padding: 8px; }
 
   .customer-table-wrap--selling {
     max-height: none;
@@ -3423,5 +3487,40 @@ a {
     flex-wrap: wrap;
     justify-content: flex-end;
   }
+}
+
+@media (max-width: 760px) {
+  .app-shell__content { padding: 6px; }
+  .app-shell__main { padding: 10px 8px 18px; }
+  .app-shell__main:has(.customer-workspace) { padding: 8px 6px 16px; }
+  .app-shell__frame { border-radius: 12px; }
+  .app-shell__header { min-height: 60px; padding-right: 12px; }
+
+  .designer-picker { padding: 8px; }
+  .designer-picker__tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .designer-picker__tabs::-webkit-scrollbar { display: none; }
+  .designer-picker__tab { padding: 7px 10px; }
+  .customer-list-toolbar { gap: 10px; padding: 9px 10px 11px; }
+  .customer-list-toolbar__title-row { width: 100%; }
+  .customer-view-switch--stage {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-left: 0;
+  }
+  .customer-view-switch__tab {
+    min-width: 0;
+    padding: 6px 7px;
+    font-size: 0.76rem;
+    white-space: normal;
+  }
+  .customer-search { margin: 0 10px 10px; padding: 9px 10px; }
+  .customer-notice { margin: 0 10px 10px; }
+  .customer-table--deposit tbody { grid-template-columns: 1fr; padding: 8px; }
+
 }
 

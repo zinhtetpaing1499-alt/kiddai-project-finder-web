@@ -1,5 +1,6 @@
 import {
   Bell,
+  CalendarDays,
   ExternalLink,
   FolderOpen,
   LoaderCircle,
@@ -32,6 +33,7 @@ import {
   ensureQcSheet,
   fetchSpreadsheetMetadata,
   fetchWorkflowWorksheetRows,
+  fetchWorkflowWorksheetsRows,
   findQcDestinationFolders,
   findSellingCustomerFolders,
   importCsvIntoGoogleSheet,
@@ -77,7 +79,11 @@ const CUSTOMER_CACHE_VERSION = 1;
 // Version 3 records predate the CNC-team field. Reusing that cache makes the
 // stage table render `undefined` as a status and crashes the whole React tree.
 const FINISHED_CACHE_VERSION = 4;
-const CUSTOMER_AUTO_SYNC_MS = 3_000;
+// The selected designer and Deposit Stage are fetched in one batched request.
+// A 15-second interval keeps direct Sheet edits fresh without returning to the
+// former 3-second quota pressure. App edits remain optimistic and instant.
+const CUSTOMER_AUTO_SYNC_MS = 15_000;
+const DESIGNER_NOTIFICATION_CACHE_MS = 5 * 60_000;
 // Messenger and LINE already push incoming messages to our webhooks. This poll
 // only reads the stored unread state, so once per minute keeps bells current
 // without running paid Netlify Functions thousands of times per browser/day.
@@ -242,6 +248,20 @@ function getErrorMessage(error: unknown) {
   return "The requested action could not be completed.";
 }
 
+function getCustomerLoadErrorMessage(error: unknown) {
+  const message = getErrorMessage(error);
+  if (/quota exceeded|read requests per minute|resource[_ ]exhausted|too many requests/iu.test(message)) {
+    return "Google Sheets is temporarily busy. Retrying automatically in about 1 minute.";
+  }
+
+  return message;
+}
+
+function isCacheFresh(fetchedAt: string, maxAgeMs: number) {
+  const fetchedAtMs = Date.parse(fetchedAt);
+  return Number.isFinite(fetchedAtMs) && Date.now() - fetchedAtMs < maxAgeMs;
+}
+
 function cacheKey(mode: CustomerMode, designer: DesignerName) {
   return `kiddai.customerWorkspace.${CUSTOMER_CACHE_VERSION}.${mode}.${designer}`;
 }
@@ -387,6 +407,15 @@ function dateInputValue(value: string) {
     return "";
   }
   return `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+}
+
+function displayDateValue(value: string) {
+  const isoValue = dateInputValue(value);
+  if (!isoValue) {
+    return value.trim();
+  }
+  const [year, month, day] = isoValue.split("-");
+  return `${Number(day)}/${Number(month)}/${year}`;
 }
 
 function sheetDateValue(value: string) {
@@ -535,8 +564,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const [cellDrafts, setCellDrafts] = useState<Record<string, string>>({});
   const requestSequenceRef = useRef(0);
   const requestsInFlightRef = useRef(new Set<string>());
-  const designerRefreshFailuresRef = useRef(0);
-  const finishedRefreshFailuresRef = useRef(0);
   const templateIdsCacheRef = useRef<{ ids: TemplateSpreadsheetIds; fetchedAt: number } | null>(null);
   const destinationCacheRef = useRef(new Map<string, GoogleDriveFolderCandidate[]>());
   const sellingFolderCacheRef = useRef(new Map<string, ProjectSearchResult[]>());
@@ -591,6 +618,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         return;
       }
 
+      const savedPayload = readCache(mode, designer);
+      if (background && savedPayload && isCacheFresh(savedPayload.fetchedAt, CUSTOMER_AUTO_SYNC_MS)) {
+        return;
+      }
+
       const requestKey = `${mode}:${designer}`;
       if (requestsInFlightRef.current.has(requestKey)) {
         return;
@@ -600,7 +632,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       const requestId = ++requestSequenceRef.current;
       if (!background) {
         setIsInitialLoading(true);
-        designerRefreshFailuresRef.current = 0;
         setLoadWarning("");
       }
 
@@ -615,12 +646,40 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
           }
         }
 
-        const [worksheetRows, depositStageSnapshot] = await Promise.all([
-          fetchWorkflowWorksheetRows(spreadsheetId, designer),
-          mode === "deposit"
-            ? loadDepositStageSnapshot(spreadsheetId, background)
-            : Promise.resolve(null),
-        ]);
+        let worksheetRows;
+        let depositStageSnapshot: DepositStageSnapshot | null = null;
+        if (mode === "deposit") {
+          let depositStageWorksheetName =
+            depositStageSnapshotRef.current?.worksheetName ??
+            readFinishedCache()?.worksheetName?.trim() ??
+            "";
+          if (!depositStageWorksheetName) {
+            const metadata = await fetchSpreadsheetMetadata(spreadsheetId);
+            depositStageWorksheetName = resolveDepositStageWorksheetName(metadata.worksheetNames) ?? "";
+          }
+          if (!depositStageWorksheetName) {
+            throw new Error("Could not find the Deposit Stage worksheet.");
+          }
+
+          const worksheets = await fetchWorkflowWorksheetsRows(spreadsheetId, [
+            designer,
+            depositStageWorksheetName,
+          ]);
+          const designerRows = worksheets.find((item) => item.worksheetName === designer);
+          const stageRows = worksheets.find((item) => item.worksheetName === depositStageWorksheetName);
+          if (!designerRows || !stageRows) {
+            throw new Error("Google Sheets did not return all requested worksheets.");
+          }
+          worksheetRows = designerRows;
+          depositStageSnapshot = {
+            worksheetName: depositStageWorksheetName,
+            rows: stageRows.rows,
+            loadedAt: Date.now(),
+          };
+          depositStageSnapshotRef.current = depositStageSnapshot;
+        } else {
+          worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, designer);
+        }
         let nextRecords = parseDesignerCustomers(worksheetRows.rows, mode);
         if (depositStageSnapshot) {
           nextRecords = nextRecords.map((record) => {
@@ -657,7 +716,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
 
         writeCache(nextPayload);
         setRecords(nextRecords);
-        designerRefreshFailuresRef.current = 0;
         setLoadWarning("");
       } catch (error) {
         if (requestId !== requestSequenceRef.current) {
@@ -665,13 +723,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         }
         const hasSavedData = (readCache(mode, designer)?.records.length ?? 0) > 0;
         if (background && hasSavedData) {
-          designerRefreshFailuresRef.current += 1;
-          if (designerRefreshFailuresRef.current >= 3) {
-            setLoadWarning("Live update delayed. Showing saved data and retrying automatically.");
-          }
+          // Keep showing saved data and retry automatically without flashing a warning.
+          setLoadWarning("");
         } else {
-          designerRefreshFailuresRef.current = 0;
-          setLoadWarning(getErrorMessage(error));
+          setLoadWarning(getCustomerLoadErrorMessage(error));
         }
       } finally {
         requestsInFlightRef.current.delete(requestKey);
@@ -680,7 +735,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         }
       }
     },
-    [connection.status, designer, loadDepositStageSnapshot, mode, refreshGoogleConnection],
+    [connection.status, designer, mode, refreshGoogleConnection],
   );
 
   useEffect(() => {
@@ -692,43 +747,52 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         return;
       }
 
-      await Promise.all(
-        DESIGNERS.filter((designerName) => designerName !== designer).map(async (designerName) => {
-          const requestKey = `notifications:${mode}:${designerName}`;
-          if (requestsInFlightRef.current.has(requestKey)) {
-            return;
-          }
-          requestsInFlightRef.current.add(requestKey);
+      const staleDesignerNames = DESIGNERS.filter((designerName) => {
+        if (designerName === designer) {
+          return false;
+        }
+        const savedPayload = readCache(mode, designerName);
+        return !savedPayload || !isCacheFresh(savedPayload.fetchedAt, DESIGNER_NOTIFICATION_CACHE_MS);
+      });
+      const requestKey = `notifications:${mode}:batch`;
+      if (staleDesignerNames.length === 0 || requestsInFlightRef.current.has(requestKey)) {
+        return;
+      }
+      requestsInFlightRef.current.add(requestKey);
 
-          try {
-            const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, designerName);
-            if (!cancelled) {
-              let nextRecords = parseDesignerCustomers(worksheetRows.rows, mode);
-              const stageSnapshot = mode === "deposit" ? depositStageSnapshotRef.current : null;
-              if (stageSnapshot) {
-                nextRecords = nextRecords.map((record) => {
-                  const stageValues = readDepositStageProjectValues(
-                    stageSnapshot.rows,
-                    record.projectNumber,
-                  );
-                  return stageValues ? { ...record, ...stageValues } : record;
-                });
-              }
-              writeCache({
-                version: CUSTOMER_CACHE_VERSION,
-                mode,
-                designer: designerName,
-                fetchedAt: worksheetRows.fetchedAt,
-                records: nextRecords,
+      try {
+        const worksheets = await fetchWorkflowWorksheetsRows(spreadsheetId, [...staleDesignerNames]);
+        if (!cancelled) {
+          for (const designerName of staleDesignerNames) {
+            const worksheetRows = worksheets.find((item) => item.worksheetName === designerName);
+            if (!worksheetRows) {
+              continue;
+            }
+            let nextRecords = parseDesignerCustomers(worksheetRows.rows, mode);
+            const stageSnapshot = mode === "deposit" ? depositStageSnapshotRef.current : null;
+            if (stageSnapshot) {
+              nextRecords = nextRecords.map((record) => {
+                const stageValues = readDepositStageProjectValues(
+                  stageSnapshot.rows,
+                  record.projectNumber,
+                );
+                return stageValues ? { ...record, ...stageValues } : record;
               });
             }
-          } catch {
-            // Keep any saved list so its notification bell can still be calculated.
-          } finally {
-            requestsInFlightRef.current.delete(requestKey);
+            writeCache({
+              version: CUSTOMER_CACHE_VERSION,
+              mode,
+              designer: designerName,
+              fetchedAt: worksheetRows.fetchedAt,
+              records: nextRecords,
+            });
           }
-        }),
-      );
+        }
+      } catch {
+        // Keep any saved lists so notification bells can still be calculated.
+      } finally {
+        requestsInFlightRef.current.delete(requestKey);
+      }
 
       if (!cancelled) {
         setDesignerCacheEpoch((value) => value + 1);
@@ -749,6 +813,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         return;
       }
 
+      const savedPayload = readFinishedCache();
+      if (background && savedPayload && isCacheFresh(savedPayload.fetchedAt, CUSTOMER_AUTO_SYNC_MS)) {
+        return;
+      }
+
       const requestKey = "deposit:finished:stage";
       if (requestsInFlightRef.current.has(requestKey)) {
         return;
@@ -758,7 +827,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       const requestId = ++requestSequenceRef.current;
       if (!background) {
         setIsInitialLoading(true);
-        finishedRefreshFailuresRef.current = 0;
         setLoadWarning("");
       }
 
@@ -815,7 +883,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
 
         writeFinishedCache(nextPayload);
         setFinishedAll(nextRecords);
-        finishedRefreshFailuresRef.current = 0;
         setLoadWarning("");
       } catch (error) {
         if (requestId !== requestSequenceRef.current) {
@@ -823,15 +890,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         }
         const hasSavedData = (readFinishedCache()?.records.length ?? 0) > 0;
         if (background && hasSavedData) {
-          finishedRefreshFailuresRef.current += 1;
-          if (finishedRefreshFailuresRef.current >= 3) {
-            setLoadWarning(
-              "Live update delayed. Showing saved finished customers and retrying automatically.",
-            );
-          }
+          // Keep showing saved data and retry automatically without flashing a warning.
+          setLoadWarning("");
         } else {
-          finishedRefreshFailuresRef.current = 0;
-          setLoadWarning(getErrorMessage(error));
+          setLoadWarning(getCustomerLoadErrorMessage(error));
         }
       } finally {
         requestsInFlightRef.current.delete(requestKey);
@@ -1796,17 +1858,17 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   ) {
     const cellKey = depositCellKey(record, field);
     const rawValue = cellDrafts[cellKey] ?? record[field];
-    const value = field === "sendCnc" ? dateInputValue(rawValue) : rawValue;
+    const value = field === "sendCnc" ? displayDateValue(rawValue) : rawValue;
     return (
       <td key={field} data-label={label}>
         <div className="customer-cell-input-wrap">
           <input
-            className="customer-cell-input"
-            type={field === "sendCnc" ? "date" : "text"}
+            className={`customer-cell-input${field === "sendCnc" ? " customer-cell-input--date-display" : ""}`}
+            type="text"
             inputMode={field === "pieces" ? "numeric" : undefined}
             value={value}
-            placeholder="—"
             aria-label={label}
+            placeholder={field === "sendCnc" ? "d/m/yyyy" : "—"}
             onChange={(event) => {
               const inputValue = event.currentTarget.value;
               setCellDrafts((current) => ({ ...current, [cellKey]: inputValue }));
@@ -1818,6 +1880,25 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               }
             }}
           />
+          {field === "sendCnc" ? (
+            <>
+              <CalendarDays className="customer-cell-date-icon" size={14} aria-hidden />
+              <input
+                className="customer-cell-date-picker"
+                type="date"
+                value={dateInputValue(rawValue)}
+                aria-label="Choose Send CNC date"
+                onChange={(event) => {
+                  const pickedValue = event.currentTarget.value;
+                  setCellDrafts((current) => ({
+                    ...current,
+                    [cellKey]: displayDateValue(pickedValue),
+                  }));
+                  saveDepositCell(record, field, pickedValue);
+                }}
+              />
+            </>
+          ) : null}
         </div>
       </td>
     );
@@ -1862,9 +1943,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         onClick={() => void beginCustomerAction(record, action)}
         disabled={Boolean(busyActionKey)}
         aria-busy={isBusy}
+        aria-label={isBusy ? `Working on ${label}` : label}
+        title={label}
       >
         {isBusy ? <LoaderCircle className="customer-action__spinner" size={14} /> : <Icon size={14} />}
-        {isBusy ? "Working…" : label}
+        <span className="customer-action__label">{isBusy ? "Working…" : label}</span>
       </button>
     );
   }
