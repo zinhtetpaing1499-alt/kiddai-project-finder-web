@@ -74,7 +74,9 @@ import {
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
-const FINISHED_CACHE_VERSION = 3;
+// Version 3 records predate the CNC-team field. Reusing that cache makes the
+// stage table render `undefined` as a status and crashes the whole React tree.
+const FINISHED_CACHE_VERSION = 4;
 const CUSTOMER_AUTO_SYNC_MS = 3_000;
 // Messenger and LINE already push incoming messages to our webhooks. This poll
 // only reads the stored unread state, so once per minute keeps bells current
@@ -364,13 +366,15 @@ function parseDesignerCustomers(rows: WorkflowCell[][], mode: CustomerMode) {
   return records;
 }
 
-function statusLabel(value: string) {
-  const trimmedValue = value.trim();
+function statusLabel(value: string | null | undefined) {
+  const trimmedValue = value?.trim() ?? "";
   return trimmedValue || "—";
 }
 
-function isPositiveStatus(value: string) {
-  return ["yes", "done", "complete", "completed", "ready"].includes(value.trim().toLowerCase());
+function isPositiveStatus(value: string | null | undefined) {
+  return ["yes", "done", "complete", "completed", "ready"].includes(
+    value?.trim().toLowerCase() ?? "",
+  );
 }
 
 function dateInputValue(value: string) {

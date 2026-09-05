@@ -322,12 +322,12 @@ export function parseDepositStageFinished(
   return records;
 }
 
-export function matchDepositStageOwner(owner: string, designerName: string) {
-  return owner.trim().toLocaleLowerCase() === designerName.trim().toLocaleLowerCase();
+export function matchDepositStageOwner(owner: string | null | undefined, designerName: string) {
+  return (owner?.trim().toLocaleLowerCase() ?? "") === designerName.trim().toLocaleLowerCase();
 }
 
-export function parseDepositStageDate(value: string) {
-  const match = value.trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/u);
+export function parseDepositStageDate(value: string | null | undefined) {
+  const match = (value?.trim() ?? "").match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/u);
   if (!match) {
     return null;
   }
@@ -361,7 +361,7 @@ function startOfLocalDay(value: Date) {
 }
 
 export function classifyDepositInstallStatus(
-  installation: string,
+  installation: string | null | undefined,
   now = new Date(),
 ): DepositInstallStatus {
   const installAt = parseDepositStageDate(installation);
