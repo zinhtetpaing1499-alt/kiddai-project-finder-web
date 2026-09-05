@@ -50,6 +50,7 @@ function tryReadOAuthClient() {
 
 const LIVE_GOOGLE_API_ORIGIN =
   process.env.KIDDAI_LIVE_GOOGLE_API?.trim() || "https://kiddai.netlify.app";
+const PROXY_LIVE_MESSAGING = process.env.KIDDAI_PROXY_LIVE_MESSAGING?.trim() === "true";
 
 async function proxyApiToLiveSite(req: IncomingMessage, res: ServerResponse) {
   const pathAndQuery = req.url ?? "/";
@@ -107,7 +108,17 @@ function googleAuthApiPlugin(): Plugin {
 
         try {
           if (isMessagingApi) {
-            await proxyApiToLiveSite(req, res);
+            if (PROXY_LIVE_MESSAGING) {
+              await proxyApiToLiveSite(req, res);
+            } else {
+              // Local development must not silently generate paid production
+              // Function traffic. Opt in explicitly only while testing bells.
+              sendJson(res, 200, {
+                unreadCount: 0,
+                notifications: [],
+                localDevelopment: true,
+              });
+            }
             return;
           }
 

@@ -76,7 +76,10 @@ const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
 const CUSTOMER_CACHE_VERSION = 1;
 const FINISHED_CACHE_VERSION = 3;
 const CUSTOMER_AUTO_SYNC_MS = 3_000;
-const MESSAGING_NOTI_POLL_MS = 4_000;
+// Messenger and LINE already push incoming messages to our webhooks. This poll
+// only reads the stored unread state, so once per minute keeps bells current
+// without running paid Netlify Functions thousands of times per browser/day.
+const MESSAGING_NOTI_POLL_MS = 60_000;
 
 /** Shared shape for FB + LINE unread matching / bell UI. */
 type MessagingNotification = {
@@ -538,6 +541,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const depositStageLoadRef = useRef<Promise<DepositStageSnapshot> | null>(null);
   const pendingCellValuesRef = useRef(new Map<string, string>());
   const cellWriteQueuesRef = useRef(new Map<string, Promise<void>>());
+  const messagingRefreshInFlightRef = useRef(false);
   const [designerCacheEpoch, setDesignerCacheEpoch] = useState(0);
 
   const loadDepositStageSnapshot = useCallback(async (spreadsheetId: string, force = false) => {
@@ -927,13 +931,21 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     let cancelled = false;
 
     async function refreshMessagingNotifications() {
-      const [facebookResult, lineResult] = await Promise.all([
-        fetchFacebookNotifications(),
-        fetchLineNotifications(),
-      ]);
-      if (!cancelled) {
-        setFacebookNotifications(facebookResult.notifications);
-        setLineNotifications(lineResult.notifications);
+      if (messagingRefreshInFlightRef.current) {
+        return;
+      }
+      messagingRefreshInFlightRef.current = true;
+      try {
+        const [facebookResult, lineResult] = await Promise.all([
+          fetchFacebookNotifications(),
+          fetchLineNotifications(),
+        ]);
+        if (!cancelled) {
+          setFacebookNotifications(facebookResult.notifications);
+          setLineNotifications(lineResult.notifications);
+        }
+      } finally {
+        messagingRefreshInFlightRef.current = false;
       }
     }
 

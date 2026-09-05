@@ -147,18 +147,15 @@ export async function handler(event) {
 
   try {
     if (method === "GET") {
-      const pageAccessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN?.trim() || "";
-      const sync = await syncUnreadFromGraph(pageAccessToken);
-      if (sync.synced > 0) {
-        console.log("facebook-notifications: synced", sync.synced, "from Graph");
-      }
-
+      // Incoming messages are already pushed into Blobs by facebook-webhook.
+      // Do not call the Graph conversations API on every browser poll: that
+      // made each read slow and consumed substantial Functions compute.
       const all = await readNotifications();
       const unread = all.filter((item) => !item.read);
       return json(200, {
         unreadCount: unread.length,
         notifications: unread,
-        sync,
+        sync: { synced: 0, skipped: true, reason: "webhook-only" },
       });
     }
 
