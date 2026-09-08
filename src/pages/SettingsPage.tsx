@@ -16,6 +16,22 @@ import {
   type SharedDriveInfo,
 } from "../services/googleApi";
 
+const WORKFLOW_DATA_CACHE_PREFIXES = [
+  "kiddai.customerWorkspace.",
+  "kiddai.depositStageFinished.",
+] as const;
+
+function clearWorkflowDataCaches() {
+  const keysToRemove: string[] = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key && WORKFLOW_DATA_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+}
+
 function saveWorkflowSheetUrl(rawUrl: string) {
   const trimmedUrl = rawUrl.trim();
   if (!trimmedUrl.startsWith("https://docs.google.com/spreadsheets/")) {
@@ -27,9 +43,15 @@ function saveWorkflowSheetUrl(rawUrl: string) {
     return { ok: false as const, error: "Google Sheets URL must include /d/{id}/" };
   }
 
+  const spreadsheetId = spreadsheetIdMatch[1];
+  const previousSpreadsheetId =
+    window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+  if (previousSpreadsheetId && previousSpreadsheetId !== spreadsheetId) {
+    clearWorkflowDataCaches();
+  }
   window.localStorage.setItem(WORKFLOW_GOOGLE_SHEET_URL_KEY, trimmedUrl);
-  window.localStorage.setItem(WORKFLOW_GOOGLE_SHEET_ID_KEY, spreadsheetIdMatch[1]);
-  return { ok: true as const, spreadsheetId: spreadsheetIdMatch[1] };
+  window.localStorage.setItem(WORKFLOW_GOOGLE_SHEET_ID_KEY, spreadsheetId);
+  return { ok: true as const, spreadsheetId };
 }
 
 export function SettingsPage() {

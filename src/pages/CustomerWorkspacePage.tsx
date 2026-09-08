@@ -55,9 +55,7 @@ import {
 } from "../services/googleApi";
 import {
   getStoredLinkSourceConfig,
-  readCachedTemplateSpreadsheetIds,
   resolveTemplateSpreadsheetIdsFromRows,
-  writeCachedTemplateSpreadsheetIds,
 } from "../utils/linksSheet";
 import {
   customerReminderKey,
@@ -75,10 +73,10 @@ import {
 } from "../utils/depositStage";
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
-const CUSTOMER_CACHE_VERSION = 1;
+const CUSTOMER_CACHE_VERSION = 2;
 // Version 3 records predate the CNC-team field. Reusing that cache makes the
 // stage table render `undefined` as a status and crashes the whole React tree.
-const FINISHED_CACHE_VERSION = 4;
+const FINISHED_CACHE_VERSION = 5;
 // The selected designer and Deposit Stage are fetched in one batched request.
 // A 15-second interval keeps direct Sheet edits fresh without returning to the
 // former 3-second quota pressure. App edits remain optimistic and instant.
@@ -144,6 +142,7 @@ const EDITABLE_DEPOSIT_FIELDS: EditableDepositField[] = [
 
 type CustomerCachePayload = {
   version: number;
+  spreadsheetId: string;
   mode: CustomerMode;
   designer: DesignerName;
   fetchedAt: string;
@@ -152,6 +151,7 @@ type CustomerCachePayload = {
 
 type FinishedCachePayload = {
   version: number;
+  spreadsheetId: string;
   fetchedAt: string;
   worksheetName: string;
   records: CustomerRecord[];
@@ -168,8 +168,6 @@ type DepositListView = "active" | "waiting" | "installing" | "finished";
 function isDepositStageView(view: DepositListView) {
   return view === "waiting" || view === "installing" || view === "finished";
 }
-
-type TemplateSpreadsheetIds = Record<CreateSheetKind, string>;
 
 type PendingLocalFolderChoice = {
   record: CustomerRecord;
@@ -262,12 +260,20 @@ function isCacheFresh(fetchedAt: string, maxAgeMs: number) {
   return Number.isFinite(fetchedAtMs) && Date.now() - fetchedAtMs < maxAgeMs;
 }
 
-function cacheKey(mode: CustomerMode, designer: DesignerName) {
-  return `kiddai.customerWorkspace.${CUSTOMER_CACHE_VERSION}.${mode}.${designer}`;
+function currentWorkflowSpreadsheetId() {
+  return window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+}
+
+function cacheKey(spreadsheetId: string, mode: CustomerMode, designer: DesignerName) {
+  return `kiddai.customerWorkspace.${CUSTOMER_CACHE_VERSION}.${spreadsheetId}.${mode}.${designer}`;
 }
 
 function readCache(mode: CustomerMode, designer: DesignerName) {
-  const key = cacheKey(mode, designer);
+  const spreadsheetId = currentWorkflowSpreadsheetId();
+  if (!spreadsheetId) {
+    return null;
+  }
+  const key = cacheKey(spreadsheetId, mode, designer);
   const memoryValue = customerMemoryCache.get(key);
   if (memoryValue) {
     return memoryValue;
@@ -282,6 +288,7 @@ function readCache(mode: CustomerMode, designer: DesignerName) {
     const parsedValue = JSON.parse(rawValue) as CustomerCachePayload;
     if (
       parsedValue.version !== CUSTOMER_CACHE_VERSION ||
+      parsedValue.spreadsheetId !== spreadsheetId ||
       parsedValue.mode !== mode ||
       parsedValue.designer !== designer ||
       !Array.isArray(parsedValue.records)
@@ -296,7 +303,7 @@ function readCache(mode: CustomerMode, designer: DesignerName) {
 }
 
 function writeCache(payload: CustomerCachePayload) {
-  const key = cacheKey(payload.mode, payload.designer);
+  const key = cacheKey(payload.spreadsheetId, payload.mode, payload.designer);
   customerMemoryCache.set(key, payload);
   try {
     window.localStorage.setItem(key, JSON.stringify(payload));
@@ -305,18 +312,26 @@ function writeCache(payload: CustomerCachePayload) {
   }
 }
 
-function finishedCacheKey() {
-  return `kiddai.depositStageFinished.${FINISHED_CACHE_VERSION}`;
+function finishedCacheKey(spreadsheetId: string) {
+  return `kiddai.depositStageFinished.${FINISHED_CACHE_VERSION}.${spreadsheetId}`;
 }
 
 function readFinishedCache(): FinishedCachePayload | null {
+  const spreadsheetId = currentWorkflowSpreadsheetId();
+  if (!spreadsheetId) {
+    return null;
+  }
   try {
-    const rawValue = window.localStorage.getItem(finishedCacheKey());
+    const rawValue = window.localStorage.getItem(finishedCacheKey(spreadsheetId));
     if (!rawValue) {
       return null;
     }
     const parsed = JSON.parse(rawValue) as FinishedCachePayload;
-    if (parsed.version !== FINISHED_CACHE_VERSION || !Array.isArray(parsed.records)) {
+    if (
+      parsed.version !== FINISHED_CACHE_VERSION ||
+      parsed.spreadsheetId !== spreadsheetId ||
+      !Array.isArray(parsed.records)
+    ) {
       return null;
     }
     return parsed;
@@ -327,7 +342,7 @@ function readFinishedCache(): FinishedCachePayload | null {
 
 function writeFinishedCache(payload: FinishedCachePayload) {
   try {
-    window.localStorage.setItem(finishedCacheKey(), JSON.stringify(payload));
+    window.localStorage.setItem(finishedCacheKey(payload.spreadsheetId), JSON.stringify(payload));
   } catch (error) {
     console.error("Unable to save the finished-customer cache.", error);
   }
@@ -564,7 +579,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const [cellDrafts, setCellDrafts] = useState<Record<string, string>>({});
   const requestSequenceRef = useRef(0);
   const requestsInFlightRef = useRef(new Set<string>());
-  const templateIdsCacheRef = useRef<{ ids: TemplateSpreadsheetIds; fetchedAt: number } | null>(null);
   const destinationCacheRef = useRef(new Map<string, GoogleDriveFolderCandidate[]>());
   const sellingFolderCacheRef = useRef(new Map<string, ProjectSearchResult[]>());
   const depositStageSnapshotRef = useRef<DepositStageSnapshot | null>(null);
@@ -704,6 +718,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         }
         const nextPayload: CustomerCachePayload = {
           version: CUSTOMER_CACHE_VERSION,
+          spreadsheetId,
           mode,
           designer,
           fetchedAt: worksheetRows.fetchedAt,
@@ -781,6 +796,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
             }
             writeCache({
               version: CUSTOMER_CACHE_VERSION,
+              spreadsheetId,
               mode,
               designer: designerName,
               fetchedAt: worksheetRows.fetchedAt,
@@ -872,6 +888,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         };
         const nextPayload: FinishedCachePayload = {
           version: FINISHED_CACHE_VERSION,
+          spreadsheetId,
           fetchedAt: worksheetRows.fetchedAt,
           worksheetName,
           records: nextRecords,
@@ -1100,21 +1117,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }, [designer, messagingNotifications, mode, records, reminderRevision]);
 
   async function resolveTemplateSpreadsheetIds() {
-    const memoryValue = templateIdsCacheRef.current;
-    if (memoryValue && Date.now() - memoryValue.fetchedAt < 10 * 60_000) {
-      return memoryValue.ids;
-    }
-
     const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
     if (!spreadsheetId) {
       throw new Error("Save the Workflow Google Sheet in Settings before creating files.");
     }
     const source = getStoredLinkSourceConfig();
-    const savedIds = readCachedTemplateSpreadsheetIds(spreadsheetId, source);
-    if (savedIds) {
-      templateIdsCacheRef.current = { ids: savedIds, fetchedAt: Date.now() };
-      return savedIds;
-    }
 
     if (connection.status !== "Connected") {
       const restored = await refreshGoogleConnection();
@@ -1124,10 +1131,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     }
 
     const rows = await fetchWorkflowWorksheetRows(spreadsheetId, source.worksheetName);
-    const ids = resolveTemplateSpreadsheetIdsFromRows(source, rows.rows);
-    writeCachedTemplateSpreadsheetIds(spreadsheetId, source, ids);
-    templateIdsCacheRef.current = { ids, fetchedAt: Date.now() };
-    return ids;
+    return resolveTemplateSpreadsheetIdsFromRows(source, rows.rows);
   }
 
   async function resolveDestinationCandidates(record: CustomerRecord, folder: ProjectSearchResult) {
@@ -1764,6 +1768,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         );
         writeCache({
           version: CUSTOMER_CACHE_VERSION,
+          spreadsheetId,
           mode,
           designer,
           fetchedAt: new Date().toISOString(),
