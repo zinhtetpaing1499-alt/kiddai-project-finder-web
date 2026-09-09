@@ -20,7 +20,7 @@ type GoogleOAuthClientFile = {
   };
 };
 
-function readOAuthClient() {
+function tryReadOAuthClient() {
   const candidates = [
     path.resolve(__dirname, "../src-tauri/secrets/google-oauth-client.json"),
     path.resolve(__dirname, "secrets/google-oauth-client.json"),
@@ -45,9 +45,36 @@ function readOAuthClient() {
     };
   }
 
-  throw new Error(
-    "Missing Google OAuth client JSON. Expected src-tauri/secrets/google-oauth-client.json",
-  );
+  return null;
+}
+
+const LIVE_GOOGLE_API_ORIGIN =
+  process.env.KIDDAI_LIVE_GOOGLE_API?.trim() || "https://kiddai.netlify.app";
+const PROXY_LIVE_MESSAGING = process.env.KIDDAI_PROXY_LIVE_MESSAGING?.trim() === "true";
+
+async function proxyApiToLiveSite(req: IncomingMessage, res: ServerResponse) {
+  const pathAndQuery = req.url ?? "/";
+  const target = `${LIVE_GOOGLE_API_ORIGIN}${pathAndQuery}`;
+  const headers: Record<string, string> = {};
+  if (req.headers["content-type"]) {
+    headers["Content-Type"] = String(req.headers["content-type"]);
+  }
+
+  const init: RequestInit = { method: req.method ?? "GET", headers };
+  if (req.method && req.method !== "GET" && req.method !== "HEAD") {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    init.body = Buffer.concat(chunks);
+  }
+
+  const response = await fetch(target, init);
+  const text = await response.text();
+  res.statusCode = response.status;
+  res.setHeader("Content-Type", response.headers.get("content-type") || "application/json");
+  res.setHeader("Cache-Control", "no-store");
+  res.end(text);
 }
 
 async function readJsonBody(req: IncomingMessage) {
@@ -70,13 +97,36 @@ function googleAuthApiPlugin(): Plugin {
     name: "kiddai-google-auth-api",
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith("/api/google/")) {
+        const isGoogleApi = req.url?.startsWith("/api/google/");
+        const isMessagingApi =
+          req.url?.startsWith("/api/facebook/") || req.url?.startsWith("/api/line/");
+
+        if (!isGoogleApi && !isMessagingApi) {
           next();
           return;
         }
 
         try {
-          const oauth = readOAuthClient();
+          if (isMessagingApi) {
+            if (PROXY_LIVE_MESSAGING) {
+              await proxyApiToLiveSite(req, res);
+            } else {
+              // Local development must not silently generate paid production
+              // Function traffic. Opt in explicitly only while testing bells.
+              sendJson(res, 200, {
+                unreadCount: 0,
+                notifications: [],
+                localDevelopment: true,
+              });
+            }
+            return;
+          }
+
+          const oauth = tryReadOAuthClient();
+          if (!oauth) {
+            await proxyApiToLiveSite(req, res);
+            return;
+          }
 
           if (req.method === "GET" && req.url === "/api/google/client-id") {
             sendJson(res, 200, { clientId: oauth.clientId });

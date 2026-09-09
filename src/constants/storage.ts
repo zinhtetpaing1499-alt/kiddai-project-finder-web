@@ -10,6 +10,8 @@ export const LINKS_CACHE_KEY = "kiddai.links.cache";
 export const TEMPLATE_SPREADSHEET_IDS_CACHE_KEY = "kiddai.templateSpreadsheetIdsCache";
 export const GOOGLE_TOKEN_STORAGE_KEY = "kiddai.web.googleToken";
 export const GOOGLE_CONNECTION_STORAGE_KEY = "kiddai.web.googleConnection";
+export const CUSTOMER_TASK_NOTES_KEY = "kiddai.customerTaskNotes.v1";
+export const CUSTOMER_CHECK_REMINDERS_KEY = "kiddai.customerCheckReminders.v1";
 
 export const DEFAULT_LINKS_WORKSHEET_NAME = "Link";
 export const DEFAULT_LINKS_QC_CELL = "A1";

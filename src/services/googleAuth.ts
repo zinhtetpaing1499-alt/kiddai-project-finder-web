@@ -12,6 +12,8 @@ const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/drive",
 ].join(" ");
 
+const OAUTH_STATE_KEY = "kiddai.web.oauthState";
+
 type StoredToken = {
   accessToken: string;
   refreshToken?: string;
@@ -62,6 +64,20 @@ function writeStoredConnection(connection: GoogleConnectionState | null) {
     return;
   }
   window.localStorage.setItem(GOOGLE_CONNECTION_STORAGE_KEY, JSON.stringify(connection));
+}
+
+function writeOAuthState(state: string) {
+  window.sessionStorage.setItem(OAUTH_STATE_KEY, state);
+  window.localStorage.setItem(OAUTH_STATE_KEY, state);
+}
+
+function readOAuthState() {
+  return window.sessionStorage.getItem(OAUTH_STATE_KEY) || window.localStorage.getItem(OAUTH_STATE_KEY);
+}
+
+function clearOAuthState() {
+  window.sessionStorage.removeItem(OAUTH_STATE_KEY);
+  window.localStorage.removeItem(OAUTH_STATE_KEY);
 }
 
 function getRedirectUri() {
@@ -130,7 +146,7 @@ export async function connectGoogleAccount(): Promise<GoogleConnectionState> {
   const clientId = await getClientId();
   const redirectUri = getRedirectUri();
   const state = crypto.randomUUID();
-  window.sessionStorage.setItem("kiddai.web.oauthState", state);
+  writeOAuthState(state);
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -149,12 +165,76 @@ export async function connectGoogleAccount(): Promise<GoogleConnectionState> {
   return await new Promise<GoogleConnectionState>(() => undefined);
 }
 
+let googleCallbackInFlight: Promise<GoogleConnectionState> | null = null;
+
 export async function completeGoogleConnectFromCallback(code: string, state: string | null) {
-  const expectedState = window.sessionStorage.getItem("kiddai.web.oauthState");
-  window.sessionStorage.removeItem("kiddai.web.oauthState");
+  if (googleCallbackInFlight) {
+    return googleCallbackInFlight;
+  }
+
+  googleCallbackInFlight = finishGoogleConnectFromCallback(code, state);
+  try {
+    return await googleCallbackInFlight;
+  } finally {
+    googleCallbackInFlight = null;
+  }
+}
+
+async function readGoogleAuthJson(response: Response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      error?: string;
+    };
+  } catch {
+    const looksLikeMissingFunction =
+      response.status === 404 ||
+      text.trimStart().startsWith("<") ||
+      text.toLowerCase().includes("page not found");
+    throw new Error(
+      looksLikeMissingFunction
+        ? "Google Connect API is missing on this deploy. Publish the full site (Git or Netlify CLI with functions), not dist-only drag-and-drop."
+        : "Unable to complete Google sign-in.",
+    );
+  }
+}
+
+async function connectionFromAccessToken(accessToken: string): Promise<GoogleConnectionState> {
+  let email: string | null = null;
+  try {
+    email = await fetchAccountEmail(accessToken);
+  } catch {
+    email = null;
+  }
+  const connection: GoogleConnectionState = {
+    status: "Connected",
+    email,
+    lastConnectedAt: new Date().toISOString(),
+  };
+  writeStoredConnection(connection);
+  return connection;
+}
+
+async function finishGoogleConnectFromCallback(code: string, state: string | null) {
+  const existingToken = readStoredToken();
+  if (existingToken?.accessToken && existingToken.expiresAt > Date.now()) {
+    try {
+      const connection = await connectionFromAccessToken(existingToken.accessToken);
+      clearOAuthState();
+      return connection;
+    } catch {
+      writeStoredToken(null);
+      writeStoredConnection(null);
+    }
+  }
+
+  const expectedState = readOAuthState();
 
   if (!expectedState || !state || expectedState !== state) {
-    throw new Error("Google sign-in state mismatch. Try Connect Google again.");
+    throw new Error("Google sign-in state mismatch. Try Connect Google again from Settings.");
   }
 
   const redirectUri = getRedirectUri();
@@ -163,25 +243,15 @@ export async function completeGoogleConnectFromCallback(code: string, state: str
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code, redirectUri }),
   });
-  const payload = (await response.json()) as {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-    error?: string;
-  };
+  const payload = await readGoogleAuthJson(response);
 
   if (!response.ok) {
     throw new Error(payload.error || "Unable to complete Google sign-in.");
   }
 
   const token = persistTokenResponse(payload);
-  const email = await fetchAccountEmail(token.accessToken);
-  const connection: GoogleConnectionState = {
-    status: "Connected",
-    email,
-    lastConnectedAt: new Date().toISOString(),
-  };
-  writeStoredConnection(connection);
+  const connection = await connectionFromAccessToken(token.accessToken);
+  clearOAuthState();
   return connection;
 }
 
@@ -196,6 +266,7 @@ export async function disconnectGoogleAccount() {
 
   writeStoredToken(null);
   writeStoredConnection(null);
+  clearOAuthState();
 }
 
 export async function getValidAccessToken(forceRefresh = false) {
@@ -215,12 +286,7 @@ export async function getValidAccessToken(forceRefresh = false) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refreshToken: existing.refreshToken }),
   });
-  const payload = (await response.json()) as {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-    error?: string;
-  };
+  const payload = await readGoogleAuthJson(response);
 
   if (!response.ok) {
     writeStoredToken(null);

@@ -1,0 +1,8 @@
+/api/google/client-id  /.netlify/functions/google-auth?action=client-id  200
+/api/google/token  /.netlify/functions/google-auth?action=token  200
+/api/google/refresh  /.netlify/functions/google-auth?action=refresh  200
+/api/facebook/webhook  /.netlify/functions/facebook-webhook  200
+/api/facebook/notifications  /.netlify/functions/facebook-notifications  200
+/api/line/webhook  /.netlify/functions/line-webhook  200
+/api/line/notifications  /.netlify/functions/line-notifications  200
+/*    /index.html   200
