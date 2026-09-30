@@ -11,6 +11,10 @@ export type InboxGroup = {
   id: string;
   name: string;
   queueNumber: string | null;
+  customerName: string | null;
+  zone: string | null;
+  installWindow: string | null;
+  designerName: string | null;
   muted: boolean;
   unread: boolean;
   preview: string;

@@ -9,6 +9,7 @@ import {
   createPerson,
   getGroup,
   listInbox,
+  setJobDetails,
   setQueueNumber,
   listPeople,
   markRead,
@@ -190,6 +191,19 @@ async function route(req: IncomingMessage, res: ServerResponse, next: () => void
       body.muted === true,
     );
     sendJson(res, 200, { muted });
+    return;
+  }
+
+  const jobMatch = pathname.match(/^\/api\/messenger\/groups\/([^/]+)\/job$/);
+  if (jobMatch && method === "POST") {
+    const body = await readJson(req);
+    const group = setJobDetails(asString(body.personId), decodeURIComponent(jobMatch[1]), {
+      customerName: asString(body.customerName),
+      zone: asString(body.zone),
+      installWindow: asString(body.installWindow),
+      designerName: asString(body.designerName),
+    });
+    sendJson(res, 200, { group });
     return;
   }
 

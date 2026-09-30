@@ -275,8 +275,76 @@
   color: #2446c8;
   font-size: 13px;
   font-weight: 700;
-  padding: 8px 16px;
+  padding: 8px 16px 6px;
   border-bottom: 1px solid #eee;
+}
+
+.job-bar:has(+ .job-card) {
+  border-bottom: 0;
+}
+
+.job-card {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 3px 8px;
+  margin: 0;
+  padding: 0 16px 10px;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.job-card div {
+  display: contents;
+}
+
+.job-card dt {
+  margin: 0;
+  color: #8d8d8d;
+  font-weight: 600;
+}
+
+.job-card dd {
+  margin: 0;
+  min-width: 0;
+  color: #111;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.job-form {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.job-form label {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: #666;
+  font-size: 13px;
+}
+
+.job-form input {
+  min-width: 0;
+  border: 1px solid #e6e6e6;
+  background: #f6f6f6;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 16px;
+}
+
+.job-form button {
+  justify-self: start;
+  background: #4c6fff;
+  color: #fff;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .row-name {

@@ -34,6 +34,10 @@ export type InboxGroup = {
   id: string;
   name: string;
   queueNumber: string | null;
+  customerName: string | null;
+  zone: string | null;
+  installWindow: string | null;
+  designerName: string | null;
   muted: boolean;
   unread: boolean;
   preview: string;
@@ -94,6 +98,10 @@ function getDb(): DatabaseSync {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       queue_number TEXT,
+      customer_name TEXT,
+      zone TEXT,
+      install_window TEXT,
+      designer_name TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -126,6 +134,7 @@ function getDb(): DatabaseSync {
 
   const db = dbGlobal.__kiddaiMessengerDb;
   ensureQueueColumn(db);
+  ensureJobColumns(db);
   ensureSeed(db);
   return db;
 }
@@ -139,6 +148,31 @@ function ensureQueueColumn(db: DatabaseSync): void {
       "UPDATE groups SET queue_number = '2412' WHERE name = 'KIDDAI 1' AND (queue_number IS NULL OR queue_number = '')",
     ).run();
   }
+}
+
+const JOB_COLUMNS = ["customer_name", "zone", "install_window", "designer_name"] as const;
+
+function ensureJobColumns(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(groups)").all() as Row[];
+  const names = new Set(columns.map((column) => cell(column, "name")));
+  let addedCustomer = false;
+  for (const name of JOB_COLUMNS) {
+    if (names.has(name)) {
+      continue;
+    }
+    db.exec(`ALTER TABLE groups ADD COLUMN ${name} TEXT`);
+    if (name === "customer_name") {
+      addedCustomer = true;
+    }
+  }
+  if (!addedCustomer) {
+    return;
+  }
+  db.prepare(
+    `UPDATE groups
+     SET customer_name = ?, zone = ?, install_window = ?, designer_name = ?
+     WHERE name = 'KIDDAI 1' AND (customer_name IS NULL OR customer_name = '')`,
+  ).run("คุณเอ", "บางนา / สุขุมวิท", "Start October", "Tod");
 }
 
 function ensureSeed(db: DatabaseSync): void {
@@ -162,10 +196,18 @@ function ensureSeed(db: DatabaseSync): void {
       "installer",
       createdAt,
     );
-    db.prepare("INSERT INTO groups (id, name, queue_number, created_at) VALUES (?, ?, ?, ?)").run(
+    db.prepare(
+      `INSERT INTO groups (
+         id, name, queue_number, customer_name, zone, install_window, designer_name, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
       "group-kiddai-1",
       "KIDDAI 1",
       "2412",
+      "คุณเอ",
+      "บางนา / สุขุมวิท",
+      "Start October",
+      "Tod",
       createdAt,
     );
     db.prepare(
@@ -296,18 +338,38 @@ export function renamePerson(actorId: string, targetId: string, name: string): P
   return toPerson(current.id, trimmed, current.role, true);
 }
 
-function requireGroup(groupId: string): { id: string; name: string; queueNumber: string | null; createdAt: string } {
+function optionalText(row: Row, key: string): string | null {
+  const value = cell(row, key);
+  return value || null;
+}
+
+function requireGroup(groupId: string): {
+  id: string;
+  name: string;
+  queueNumber: string | null;
+  customerName: string | null;
+  zone: string | null;
+  installWindow: string | null;
+  designerName: string | null;
+  createdAt: string;
+} {
   const row = getDb()
-    .prepare("SELECT id, name, queue_number, created_at FROM groups WHERE id = ?")
+    .prepare(
+      `SELECT id, name, queue_number, customer_name, zone, install_window, designer_name, created_at
+       FROM groups WHERE id = ?`,
+    )
     .get(groupId) as Row | undefined;
   if (!row) {
     throw new HttpError(404, "That group was not found.");
   }
-  const queueNumber = cell(row, "queue_number");
   return {
     id: cell(row, "id"),
     name: cell(row, "name"),
-    queueNumber: queueNumber || null,
+    queueNumber: optionalText(row, "queue_number"),
+    customerName: optionalText(row, "customer_name"),
+    zone: optionalText(row, "zone"),
+    installWindow: optionalText(row, "install_window"),
+    designerName: optionalText(row, "designer_name"),
     createdAt: cell(row, "created_at"),
   };
 }
@@ -371,6 +433,10 @@ function groupSummary(groupId: string, viewerId: string): InboxGroup {
     id: group.id,
     name: group.name,
     queueNumber: group.queueNumber,
+    customerName: group.customerName,
+    zone: group.zone,
+    installWindow: group.installWindow,
+    designerName: group.designerName,
     muted: membership?.muted ?? false,
     unread,
     preview: last ? previewText(cell(last, "kind"), cell(last, "body")) : "No messages yet",
@@ -502,6 +568,38 @@ export function setQueueNumber(actorId: string, groupId: string, queueNumber: st
     }
   }
   getDb().prepare("UPDATE groups SET queue_number = ? WHERE id = ?").run(next, groupId);
+  return groupSummary(groupId, admin.id);
+}
+
+function assertJobText(value: string, label: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.length > 80) {
+    throw new HttpError(400, `${label} is too long.`);
+  }
+  return trimmed;
+}
+
+export function setJobDetails(
+  actorId: string,
+  groupId: string,
+  input: { customerName: string; zone: string; installWindow: string; designerName: string },
+): InboxGroup {
+  const admin = requireAdmin(actorId);
+  requireGroup(groupId);
+  const customerName = assertJobText(input.customerName, "Customer name");
+  const zone = assertJobText(input.zone, "Zone");
+  const installWindow = assertJobText(input.installWindow, "Install date");
+  const designerName = assertJobText(input.designerName, "Designer name");
+  getDb()
+    .prepare(
+      `UPDATE groups
+       SET customer_name = ?, zone = ?, install_window = ?, designer_name = ?
+       WHERE id = ?`,
+    )
+    .run(customerName, zone, installWindow, designerName, groupId);
   return groupSummary(groupId, admin.id);
 }
 

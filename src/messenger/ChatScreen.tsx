@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { addMember, groupDetail, markRead, readPhotoFile, removeMember, sendPhoto, sendText, setMuted, setQueue } from "./api";
+import { addMember, groupDetail, markRead, readPhotoFile, removeMember, sendPhoto, sendText, setJob, setMuted, setQueue } from "./api";
 import { formatClock, messageBlocks } from "./format";
 import { BellIcon, ChevronLeftIcon, GroupAvatar, MutedBellIcon, PlusIcon, SendIcon } from "./icons";
 import { useMessenger } from "./MessengerContext";
@@ -19,6 +19,10 @@ export function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [memberName, setMemberName] = useState("");
   const [queueDraft, setQueueDraft] = useState("");
+  const [customerDraft, setCustomerDraft] = useState("");
+  const [zoneDraft, setZoneDraft] = useState("");
+  const [installDraft, setInstallDraft] = useState("");
+  const [designerDraft, setDesignerDraft] = useState("");
   const openAddPanel = Boolean((location.state as { add?: boolean } | null)?.add);
   const [panelOpen, setPanelOpen] = useState(openAddPanel);
   const [revision, setRevision] = useState(0);
@@ -74,7 +78,18 @@ export function ChatScreen() {
 
   useEffect(() => {
     setQueueDraft(detail?.group.queueNumber ?? "");
-  }, [detail?.group.id, detail?.group.queueNumber]);
+    setCustomerDraft(detail?.group.customerName ?? "");
+    setZoneDraft(detail?.group.zone ?? "");
+    setInstallDraft(detail?.group.installWindow ?? "");
+    setDesignerDraft(detail?.group.designerName ?? "");
+  }, [
+    detail?.group.id,
+    detail?.group.queueNumber,
+    detail?.group.customerName,
+    detail?.group.zone,
+    detail?.group.installWindow,
+    detail?.group.designerName,
+  ]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -186,6 +201,25 @@ export function ChatScreen() {
     }
   }
 
+  async function onSaveJob() {
+    if (!viewer || !detail) {
+      return;
+    }
+    setFormError(null);
+    try {
+      const result = await setJob(detail.group.id, viewer.id, {
+        customerName: customerDraft,
+        zone: zoneDraft,
+        installWindow: installDraft,
+        designerName: designerDraft,
+      });
+      setDetail((current) => (current ? { ...current, group: result.group } : current));
+      setNotice("Job details saved.");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Could not save those job details.");
+    }
+  }
+
   async function onToggleMute() {
     if (!viewer || !detail) {
       return;
@@ -220,6 +254,12 @@ export function ChatScreen() {
   const blocks = messageBlocks(detail.messages);
   const memberLabel = detail.group.memberCount === 1 ? "1 member" : `${detail.group.memberCount} members`;
   const queueLabel = detail.group.queueNumber ? `Queue ${detail.group.queueNumber}` : "";
+  const jobRows = [
+    ["Customer", detail.group.customerName, "job-customer"],
+    ["Zone", detail.group.zone, "job-zone"],
+    ["Install", detail.group.installWindow, "job-install"],
+    ["Designer", detail.group.designerName, "job-designer"],
+  ].filter((row): row is [string, string, string] => Boolean(row[1]));
 
   return (
     <div className="chat" data-testid="chat">
@@ -255,6 +295,17 @@ export function ChatScreen() {
         </div>
       ) : null}
 
+      {jobRows.length > 0 ? (
+        <dl className="job-card" data-testid="job-card">
+          {jobRows.map(([label, value, testId]) => (
+            <div key={testId}>
+              <dt>{label}</dt>
+              <dd data-testid={testId}>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+
       {panelOpen && viewer.role === "admin" ? (
         <section className="member-panel">
           <p className="member-help">Queue number is the job id after deposit. The messages in this chat are for that job.</p>
@@ -274,6 +325,54 @@ export function ChatScreen() {
             />
             <button type="submit" data-testid="save-queue">
               Save
+            </button>
+          </form>
+          <p className="member-help">Customer, zone, install date or promised window, and designer. Shown under the queue number.</p>
+          <form
+            className="job-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onSaveJob();
+            }}
+          >
+            <label>
+              Customer
+              <input
+                data-testid="job-customer-input"
+                value={customerDraft}
+                maxLength={80}
+                onChange={(event) => setCustomerDraft(event.target.value)}
+              />
+            </label>
+            <label>
+              Zone
+              <input
+                data-testid="job-zone-input"
+                value={zoneDraft}
+                maxLength={80}
+                onChange={(event) => setZoneDraft(event.target.value)}
+              />
+            </label>
+            <label>
+              Install
+              <input
+                data-testid="job-install-input"
+                value={installDraft}
+                maxLength={80}
+                onChange={(event) => setInstallDraft(event.target.value)}
+              />
+            </label>
+            <label>
+              Designer
+              <input
+                data-testid="job-designer-input"
+                value={designerDraft}
+                maxLength={80}
+                onChange={(event) => setDesignerDraft(event.target.value)}
+              />
+            </label>
+            <button type="submit" data-testid="save-job">
+              Save job
             </button>
           </form>
           <p className="member-help">Type a name to add someone. Remove them to move them out.</p>

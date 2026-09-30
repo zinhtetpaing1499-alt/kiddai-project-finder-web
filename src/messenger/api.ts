@@ -41,6 +41,17 @@ export function setQueue(groupId: string, personId: string, queueNumber: string)
   });
 }
 
+export function setJob(
+  groupId: string,
+  personId: string,
+  job: { customerName: string; zone: string; installWindow: string; designerName: string },
+): Promise<{ group: InboxGroup }> {
+  return request(`/api/messenger/groups/${encodeURIComponent(groupId)}/job`, {
+    method: "POST",
+    body: JSON.stringify({ personId, ...job }),
+  });
+}
+
 export function createGroup(personId: string): Promise<{ group: InboxGroup }> {
   return request("/api/messenger/groups", {
     method: "POST",
