@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { messengerApiPlugin } from "./server/messengerPlugin.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -165,9 +166,12 @@ function googleAuthApiPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), googleAuthApiPlugin()],
+  plugins: [react(), messengerApiPlugin(), googleAuthApiPlugin()],
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      ignored: ["**/data/**"],
+    },
   },
 });

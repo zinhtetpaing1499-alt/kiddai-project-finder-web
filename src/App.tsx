@@ -16,8 +16,15 @@ import {
 } from "./constants/storage";
 import { GoogleConnectionProvider } from "./contexts/GoogleConnectionContext";
 import { AppShell } from "./layouts/AppShell";
+import CncScreen from "./departments/cnc/CncScreen";
+import DesignerScreen from "./departments/designer/DesignerScreen";
+import PurchasingScreen from "./departments/purchasing/PurchasingScreen";
+import { ChatScreen } from "./messenger/ChatScreen";
+import { InboxScreen } from "./messenger/InboxScreen";
+import { PeopleScreen } from "./messenger/PeopleScreen";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { CustomerWorkspacePage } from "./pages/CustomerWorkspacePage";
+import { MessengerPage } from "./pages/MessengerPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 function App() {
@@ -56,6 +63,14 @@ function App() {
     <GoogleConnectionProvider>
       <Routes>
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
+        <Route path="/install" element={<MessengerPage />}>
+          <Route index element={<InboxScreen />} />
+          <Route path="people" element={<PeopleScreen />} />
+          <Route path="g/:groupId" element={<ChatScreen />} />
+          <Route path="designer" element={<DesignerScreen />} />
+          <Route path="purchasing" element={<PurchasingScreen />} />
+          <Route path="cnc" element={<CncScreen />} />
+        </Route>
         <Route element={<AppShell />}>
           <Route index element={<Navigate to="/deposit-customers" replace />} />
           <Route path="/deposit-customers" element={<CustomerWorkspacePage mode="deposit" />} />

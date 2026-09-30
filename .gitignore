@@ -28,3 +28,6 @@ secrets/
 *.njsproj
 *.sln
 *.sw?
+
+# Local installation messenger database and photos
+data/
