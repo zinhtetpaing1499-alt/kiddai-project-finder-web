@@ -70,6 +70,58 @@
   overflow: hidden;
 }
 
+.dept-switch {
+  width: min(100%, 430px);
+  display: flex;
+  gap: 6px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  overflow-x: auto;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+  scrollbar-width: none;
+}
+
+.install-app .dept-pill {
+  flex: none;
+  border-radius: 999px;
+  background: #ececec;
+  color: #222;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+
+.install-app .dept-pill--on {
+  background: #4c6fff;
+  color: #fff;
+}
+
+.install-app .designer-app {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  flex: 1;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  background: #fff;
+}
+
+.install-app .designer-phone {
+  width: 100%;
+}
+
+.install-app .purchasing,
+.install-app .cnc {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .role-bar {
   width: min(100%, 430px);
   display: flex;
@@ -716,6 +768,7 @@
 
 @media (max-width: 480px) {
   .install-app,
+  .dept-switch,
   .role-bar,
   .install-app__phone {
     width: 100%;

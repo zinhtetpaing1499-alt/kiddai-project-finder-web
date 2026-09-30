@@ -1,7 +1,60 @@
 import { useEffect } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { MessengerProvider, useMessenger } from "../messenger/MessengerContext";
 import "../messenger/messenger.css";
+
+const DEPARTMENTS = [
+  { id: "installation", label: "Installation", path: "/install" },
+  { id: "designer", label: "Designer", path: "/install/designer" },
+  { id: "purchasing", label: "Purchasing", path: "/install/purchasing" },
+  { id: "cnc", label: "CNC", path: "/install/cnc" },
+] as const;
+
+type DepartmentId = (typeof DEPARTMENTS)[number]["id"];
+
+function departmentFromPath(pathname: string): DepartmentId {
+  if (pathname.startsWith("/install/designer")) {
+    return "designer";
+  }
+  if (pathname.startsWith("/install/purchasing")) {
+    return "purchasing";
+  }
+  if (pathname.startsWith("/install/cnc")) {
+    return "cnc";
+  }
+  return "installation";
+}
+
+function DepartmentSwitch() {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const current = departmentFromPath(pathname);
+
+  return (
+    <div className="dept-switch" data-testid="department-switch" role="tablist" aria-label="Department">
+      {DEPARTMENTS.map((item) => {
+        const selected = current === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            data-testid={`dept-${item.id}`}
+            className={selected ? "dept-pill dept-pill--on" : "dept-pill"}
+            onClick={() => {
+              if (!selected) {
+                navigate(item.path);
+              }
+            }}
+          >
+            {item.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function RoleBar() {
   const { viewer, people, preferredInstallerId, setViewerId } = useMessenger();
@@ -55,18 +108,27 @@ function RoleBar() {
 
 function MessengerFrame() {
   const { ready, error, viewer, retry } = useMessenger();
+  const { pathname } = useLocation();
+  const department = departmentFromPath(pathname);
 
   useEffect(() => {
     const previous = document.title;
-    document.title = "KIDDAI Install";
+    const titles: Record<DepartmentId, string> = {
+      installation: "KIDDAI Install",
+      designer: "Designer",
+      purchasing: "Purchasing",
+      cnc: "CNC",
+    };
+    document.title = titles[department];
     return () => {
       document.title = previous;
     };
-  }, []);
+  }, [department]);
 
   return (
     <div className="install-app">
-      <RoleBar />
+      <DepartmentSwitch />
+      {department === "installation" ? <RoleBar /> : null}
       <div className="install-app__phone" data-testid="phone">
         {ready && viewer ? <Outlet /> : null}
         {!ready ? (
