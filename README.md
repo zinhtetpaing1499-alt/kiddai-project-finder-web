@@ -1,5 +1,11 @@
 # KIDDAI Workspace Web
 
+## Installation messenger
+
+In-house chat for installers. One server process, SQLite, and photos and videos stored on disk. The company spreadsheet is not used.
+
+See [messenger/README.md](./messenger/README.md) for how to run it and the demo logins.
+
 Browser version of KIDDAI Workspace. Same main workflows as the Tauri desktop app, without local Finder/folder access.
 
 ## What works in the browser

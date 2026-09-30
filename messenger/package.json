@@ -1,0 +1,17 @@
+{
+  "name": "kiddai-install-messenger",
+  "private": true,
+  "version": "1.0.0",
+  "description": "In-house installation messenger for Kiddai. One process, SQLite, media on disk.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.mjs"
+  },
+  "dependencies": {
+    "express": "^4.22.3",
+    "multer": "^2.4.0"
+  }
+}
