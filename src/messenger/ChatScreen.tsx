@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { addMember, groupDetail, markRead, readPhotoFile, removeMember, sendPhoto, sendText, setMuted } from "./api";
+import { addMember, groupDetail, markRead, readPhotoFile, removeMember, sendPhoto, sendText, setMuted, setQueue } from "./api";
 import { formatClock, messageBlocks } from "./format";
 import { BellIcon, ChevronLeftIcon, GroupAvatar, MutedBellIcon, PlusIcon, SendIcon } from "./icons";
 import { useMessenger } from "./MessengerContext";
@@ -18,6 +18,7 @@ export function ChatScreen() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [memberName, setMemberName] = useState("");
+  const [queueDraft, setQueueDraft] = useState("");
   const openAddPanel = Boolean((location.state as { add?: boolean } | null)?.add);
   const [panelOpen, setPanelOpen] = useState(openAddPanel);
   const [revision, setRevision] = useState(0);
@@ -70,6 +71,10 @@ export function ChatScreen() {
       window.clearInterval(timer);
     };
   }, [viewer, groupId, revision]);
+
+  useEffect(() => {
+    setQueueDraft(detail?.group.queueNumber ?? "");
+  }, [detail?.group.id, detail?.group.queueNumber]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -167,6 +172,20 @@ export function ChatScreen() {
     }
   }
 
+  async function onSaveQueue() {
+    if (!viewer || !detail) {
+      return;
+    }
+    setFormError(null);
+    try {
+      const result = await setQueue(detail.group.id, viewer.id, queueDraft);
+      setDetail((current) => (current ? { ...current, group: result.group } : current));
+      setNotice(result.group.queueNumber ? `Queue set to ${result.group.queueNumber}.` : "Queue cleared.");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Could not save that queue number.");
+    }
+  }
+
   async function onToggleMute() {
     if (!viewer || !detail) {
       return;
@@ -200,6 +219,7 @@ export function ChatScreen() {
 
   const blocks = messageBlocks(detail.messages);
   const memberLabel = detail.group.memberCount === 1 ? "1 member" : `${detail.group.memberCount} members`;
+  const queueLabel = detail.group.queueNumber ? `Queue ${detail.group.queueNumber}` : "";
 
   return (
     <div className="chat" data-testid="chat">
@@ -210,7 +230,7 @@ export function ChatScreen() {
         <GroupAvatar name={detail.group.name} size={40} />
         <span className="chat-title">
           <strong>{detail.group.name}</strong>
-          <span>{memberLabel}</span>
+          <span>{queueLabel ? `${queueLabel} · ${memberLabel}` : memberLabel}</span>
         </span>
         <button
           type="button"
@@ -229,8 +249,33 @@ export function ChatScreen() {
         ) : null}
       </header>
 
+      {detail.group.queueNumber ? (
+        <div className="job-bar" data-testid="chat-queue">
+          Queue {detail.group.queueNumber}
+        </div>
+      ) : null}
+
       {panelOpen && viewer.role === "admin" ? (
         <section className="member-panel">
+          <p className="member-help">Queue number is the job id after deposit. The messages in this chat are for that job.</p>
+          <form
+            className="member-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onSaveQueue();
+            }}
+          >
+            <input
+              data-testid="queue-input"
+              inputMode="numeric"
+              value={queueDraft}
+              placeholder="Queue number"
+              onChange={(event) => setQueueDraft(event.target.value)}
+            />
+            <button type="submit" data-testid="save-queue">
+              Save
+            </button>
+          </form>
           <p className="member-help">Type a name to add someone. Remove them to move them out.</p>
           <form
             className="member-form"

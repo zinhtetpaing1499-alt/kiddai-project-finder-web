@@ -125,6 +125,7 @@ export function InboxScreen() {
             data-testid="group-row"
             data-group-id={group.id}
             data-group-name={group.name}
+            data-queue={group.queueNumber ?? ""}
             data-unread={group.unread ? "true" : "false"}
             data-muted={group.muted ? "true" : "false"}
             onClick={() => navigate(`/install/g/${group.id}`)}
@@ -132,7 +133,14 @@ export function InboxScreen() {
             <GroupAvatar name={group.name} />
             <span className="row-copy">
               <span className="row-top">
-                <span className="row-name">{group.name}</span>
+                <span className="row-title">
+                  <span className="row-name">{group.name}</span>
+                  {group.queueNumber ? (
+                    <span className="queue-chip" data-testid="queue-number">
+                      Queue {group.queueNumber}
+                    </span>
+                  ) : null}
+                </span>
                 <span className={group.unread ? "row-time row-time--unread" : "row-time"}>
                   {formatListTime(group.lastActivityAt)}
                 </span>

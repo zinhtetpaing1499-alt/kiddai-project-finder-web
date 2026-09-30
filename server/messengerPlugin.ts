@@ -9,6 +9,7 @@ import {
   createPerson,
   getGroup,
   listInbox,
+  setQueueNumber,
   listPeople,
   markRead,
   removeMember,
@@ -193,6 +194,17 @@ async function route(req: IncomingMessage, res: ServerResponse, next: () => void
   }
 
   const groupMatch = pathname.match(/^\/api\/messenger\/groups\/([^/]+)$/);
+  if (groupMatch && method === "PATCH") {
+    const body = await readJson(req);
+    const group = setQueueNumber(
+      asString(body.personId),
+      decodeURIComponent(groupMatch[1]),
+      asString(body.queueNumber),
+    );
+    sendJson(res, 200, { group });
+    return;
+  }
+
   if (groupMatch && method === "GET") {
     sendJson(res, 200, getGroup(decodeURIComponent(groupMatch[1]), queryPersonId));
     return;

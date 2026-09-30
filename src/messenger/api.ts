@@ -34,6 +34,13 @@ export function groupDetail(groupId: string, personId: string): Promise<GroupDet
   return request(`/api/messenger/groups/${encodeURIComponent(groupId)}?personId=${encodeURIComponent(personId)}`);
 }
 
+export function setQueue(groupId: string, personId: string, queueNumber: string): Promise<{ group: InboxGroup }> {
+  return request(`/api/messenger/groups/${encodeURIComponent(groupId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ personId, queueNumber }),
+  });
+}
+
 export function createGroup(personId: string): Promise<{ group: InboxGroup }> {
   return request("/api/messenger/groups", {
     method: "POST",

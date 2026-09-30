@@ -251,7 +251,36 @@
   justify-content: space-between;
 }
 
+.row-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.queue-chip {
+  flex: none;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4c6fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 3px 7px;
+}
+
+.job-bar {
+  background: #fff;
+  color: #2446c8;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-bottom: 1px solid #eee;
+}
+
 .row-name {
+  min-width: 0;
   font-size: 16px;
   font-weight: 700;
   line-height: 1.25;

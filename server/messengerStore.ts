@@ -33,6 +33,7 @@ export type Person = {
 export type InboxGroup = {
   id: string;
   name: string;
+  queueNumber: string | null;
   muted: boolean;
   unread: boolean;
   preview: string;
@@ -75,16 +76,13 @@ function changesOf(result: { changes: number | bigint }): number {
 }
 
 function getDb(): DatabaseSync {
-  if (dbGlobal.__kiddaiMessengerDb) {
-    return dbGlobal.__kiddaiMessengerDb;
-  }
-
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.mkdirSync(mediaDir, { recursive: true });
-  const db = new DatabaseSync(dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
-  db.exec(`
+  if (!dbGlobal.__kiddaiMessengerDb) {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const opened = new DatabaseSync(dbPath);
+    opened.exec("PRAGMA journal_mode = WAL");
+    opened.exec("PRAGMA foreign_keys = ON");
+    opened.exec(`
     CREATE TABLE IF NOT EXISTS people (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
@@ -95,6 +93,7 @@ function getDb(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS groups (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
+      queue_number TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -122,9 +121,24 @@ function getDb(): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS messages_group_created ON messages (group_id, created_at);
   `);
+    dbGlobal.__kiddaiMessengerDb = opened;
+  }
+
+  const db = dbGlobal.__kiddaiMessengerDb;
+  ensureQueueColumn(db);
   ensureSeed(db);
-  dbGlobal.__kiddaiMessengerDb = db;
   return db;
+}
+
+function ensureQueueColumn(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(groups)").all() as Row[];
+  const hasQueue = columns.some((column) => cell(column, "name") === "queue_number");
+  if (!hasQueue) {
+    db.exec("ALTER TABLE groups ADD COLUMN queue_number TEXT");
+    db.prepare(
+      "UPDATE groups SET queue_number = '2412' WHERE name = 'KIDDAI 1' AND (queue_number IS NULL OR queue_number = '')",
+    ).run();
+  }
 }
 
 function ensureSeed(db: DatabaseSync): void {
@@ -148,9 +162,10 @@ function ensureSeed(db: DatabaseSync): void {
       "installer",
       createdAt,
     );
-    db.prepare("INSERT INTO groups (id, name, created_at) VALUES (?, ?, ?)").run(
+    db.prepare("INSERT INTO groups (id, name, queue_number, created_at) VALUES (?, ?, ?, ?)").run(
       "group-kiddai-1",
       "KIDDAI 1",
+      "2412",
       createdAt,
     );
     db.prepare(
@@ -281,14 +296,20 @@ export function renamePerson(actorId: string, targetId: string, name: string): P
   return toPerson(current.id, trimmed, current.role, true);
 }
 
-function requireGroup(groupId: string): { id: string; name: string; createdAt: string } {
-  const row = getDb().prepare("SELECT id, name, created_at FROM groups WHERE id = ?").get(groupId) as
-    | Row
-    | undefined;
+function requireGroup(groupId: string): { id: string; name: string; queueNumber: string | null; createdAt: string } {
+  const row = getDb()
+    .prepare("SELECT id, name, queue_number, created_at FROM groups WHERE id = ?")
+    .get(groupId) as Row | undefined;
   if (!row) {
     throw new HttpError(404, "That group was not found.");
   }
-  return { id: cell(row, "id"), name: cell(row, "name"), createdAt: cell(row, "created_at") };
+  const queueNumber = cell(row, "queue_number");
+  return {
+    id: cell(row, "id"),
+    name: cell(row, "name"),
+    queueNumber: queueNumber || null,
+    createdAt: cell(row, "created_at"),
+  };
 }
 
 function membershipOf(groupId: string, personId: string): { muted: boolean; lastReadAt: string | null } | null {
@@ -349,6 +370,7 @@ function groupSummary(groupId: string, viewerId: string): InboxGroup {
   return {
     id: group.id,
     name: group.name,
+    queueNumber: group.queueNumber,
     muted: membership?.muted ?? false,
     unread,
     preview: last ? previewText(cell(last, "kind"), cell(last, "body")) : "No messages yet",
@@ -454,6 +476,33 @@ export function createGroup(actorId: string): InboxGroup {
     throw error;
   }
   return groupSummary(id, admin.id);
+}
+
+function assertQueueNumber(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!/^\d{1,6}$/.test(trimmed)) {
+    throw new HttpError(400, "Enter the queue number from the worksheet.");
+  }
+  return trimmed;
+}
+
+export function setQueueNumber(actorId: string, groupId: string, queueNumber: string): InboxGroup {
+  const admin = requireAdmin(actorId);
+  requireGroup(groupId);
+  const next = assertQueueNumber(queueNumber);
+  if (next) {
+    const taken = getDb()
+      .prepare("SELECT id FROM groups WHERE queue_number = ? AND id != ?")
+      .get(next, groupId) as Row | undefined;
+    if (taken) {
+      throw new HttpError(409, "That queue number is already on another group.");
+    }
+  }
+  getDb().prepare("UPDATE groups SET queue_number = ? WHERE id = ?").run(next, groupId);
+  return groupSummary(groupId, admin.id);
 }
 
 export function addMemberByName(
