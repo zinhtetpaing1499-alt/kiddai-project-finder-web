@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 messenger/data/
+server/company/data/
 dist
 dist-ssr
 *.local

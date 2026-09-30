@@ -73,11 +73,8 @@ const PUBLIC_GOOGLE_CLIENT_ID =
   "631728775101-t3pi7kkuh15shl9i6ak1cr2f8kmq8s0f.apps.googleusercontent.com";
 
 async function getClientId() {
-  const fromEnv = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? "";
-  if (fromEnv) {
-    return fromEnv;
-  }
-
+  // Use the client the token endpoint can exchange. A mismatched VITE id
+  // starts Google sign-in, then the code exchange fails.
   try {
     const response = await fetch("/api/google/client-id");
     const payload = (await response.json()) as { clientId?: string; error?: string };
@@ -85,7 +82,12 @@ async function getClientId() {
       return payload.clientId.trim();
     }
   } catch {
-    // Fall through to the public client ID.
+    // Fall through to the env or public client ID.
+  }
+
+  const fromEnv = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? "";
+  if (fromEnv) {
+    return fromEnv;
   }
 
   return PUBLIC_GOOGLE_CLIENT_ID;

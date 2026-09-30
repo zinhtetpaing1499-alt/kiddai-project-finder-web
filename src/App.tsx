@@ -15,6 +15,9 @@ import {
   WORKFLOW_GOOGLE_SHEET_URL_KEY,
 } from "./constants/storage";
 import { GoogleConnectionProvider } from "./contexts/GoogleConnectionContext";
+import { CompanyHome, CompanyLater, CompanyLayout, DepartmentIndex, DepartmentStagePage } from "./company/CompanyApp";
+import { CompanyJobsPage } from "./company/JobsPage";
+import { InboxPage } from "./company/InboxPage";
 import { AppShell } from "./layouts/AppShell";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { CustomerWorkspacePage } from "./pages/CustomerWorkspacePage";
@@ -56,6 +59,19 @@ function App() {
     <GoogleConnectionProvider>
       <Routes>
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
+        <Route path="/company" element={<CompanyLayout />}>
+          <Route index element={<Navigate to="inbox" replace />} />
+          <Route path="home" element={<CompanyHome />} />
+          <Route path="inbox" element={<InboxPage />} />
+          <Route path="jobs" element={<CompanyJobsPage />} />
+          <Route path="departments" element={<DepartmentIndex />} />
+          <Route path="departments/:stage" element={<DepartmentStagePage />} />
+          <Route path="admin" element={<CompanyLater title="Admin" />} />
+          <Route path="installers" element={<CompanyLater title="Installers" />} />
+          <Route path="purchasing" element={<CompanyLater title="Purchasing" />} />
+          <Route path="cnc" element={<CompanyLater title="CNC" />} />
+          <Route path="*" element={<Navigate to="/company/inbox" replace />} />
+        </Route>
         <Route element={<AppShell />}>
           <Route index element={<Navigate to="/deposit-customers" replace />} />
           <Route path="/deposit-customers" element={<CustomerWorkspacePage mode="deposit" />} />

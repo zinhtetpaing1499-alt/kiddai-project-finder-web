@@ -639,6 +639,23 @@ export async function fetchSpreadsheetMetadata(spreadsheetId: string) {
   };
 }
 
+/** Read-only list of worksheet titles. Does not write to the spreadsheet. */
+export async function listWorkflowWorksheetTitles(spreadsheetId: string) {
+  const payload = await googleFetch<{
+    properties?: { title?: string };
+    sheets?: Array<{ properties?: { title?: string } }>;
+  }>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId.trim()}?fields=properties.title,sheets.properties.title`,
+  );
+
+  return {
+    title: payload.properties?.title ?? "Untitled spreadsheet",
+    titles: (payload.sheets ?? [])
+      .map((sheet) => sheet.properties?.title?.trim() ?? "")
+      .filter((title) => title.length > 0),
+  };
+}
+
 export async function searchProjectFolders(
   projectNumber: string,
   sharedDriveFolderId?: string | null,

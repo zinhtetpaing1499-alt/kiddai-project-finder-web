@@ -1,5 +1,6 @@
 import { CheckCircle2, Cloud, FolderSearch, Sheet } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   DEFAULT_WORKFLOW_GOOGLE_SHEET_URL,
   KIDDAI2_FOLDER_ID_KEY,
@@ -32,6 +33,7 @@ function saveWorkflowSheetUrl(rawUrl: string) {
 }
 
 export function SettingsPage() {
+  const navigate = useNavigate();
   const { connection, errorMessage, isBusy, connectGoogle, disconnectGoogle } = useGoogleConnection();
   const [workflowGoogleSheetUrl, setWorkflowGoogleSheetUrl] = useState("");
   const [sharedDrives, setSharedDrives] = useState<SharedDriveInfo[]>([]);
@@ -332,6 +334,30 @@ export function SettingsPage() {
               placeholder="https://docs.google.com/spreadsheets/..."
               aria-label="Workflow Google Sheet URL"
             />
+          </div>
+        </section>
+
+        <section className="settings-section settings-section--compact settings-section--full">
+          <div className="settings-section__header">
+            <div className="settings-section__icon">
+              <Sheet size={16} strokeWidth={2} />
+            </div>
+            <div>
+              <p className="panel__label">Company</p>
+              <h3 className="panel__title settings-title">Company portal</h3>
+            </div>
+          </div>
+          <p className="panel__text">
+            Opens the company inbox with the Google account and Workflow Sheet already on this page.
+          </p>
+          <div className="settings-section__actions">
+            <button
+              className="search-form__button settings-button"
+              type="button"
+              onClick={() => navigate("/company/inbox")}
+            >
+              Open company portal
+            </button>
           </div>
         </section>
       </section>

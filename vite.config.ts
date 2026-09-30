@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { companyApiPlugin } from "./server/company/plugin.mjs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -70,6 +71,36 @@ function googleAuthApiPlugin(): Plugin {
     name: "kiddai-google-auth-api",
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
+        if (req.method === "GET" && req.url?.startsWith("/api/workflow-sheet")) {
+          try {
+            const requestUrl = new URL(req.url, "http://127.0.0.1");
+            const spreadsheetId = requestUrl.searchParams.get("spreadsheetId")?.trim() ?? "";
+            const sheet = requestUrl.searchParams.get("sheet")?.trim() ?? "";
+            if (!/^[a-zA-Z0-9_-]{20,}$/.test(spreadsheetId) || !sheet || sheet.length > 80) {
+              sendJson(res, 400, { error: "Missing Workflow Sheet." });
+              return;
+            }
+            const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}`;
+            const csvResponse = await fetch(csvUrl, {
+              headers: { "User-Agent": "kiddai-workflow-reader" },
+            });
+            const csvText = await csvResponse.text();
+            if (!csvResponse.ok || csvText.trimStart().startsWith("<!")) {
+              sendJson(res, 502, { error: "The Workflow Sheet could not be read." });
+              return;
+            }
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "text/csv; charset=utf-8");
+            res.setHeader("Cache-Control", "no-store");
+            res.end(csvText);
+          } catch (error) {
+            sendJson(res, 500, {
+              error: error instanceof Error ? error.message : "The Workflow Sheet could not be read.",
+            });
+          }
+          return;
+        }
+
         if (!req.url?.startsWith("/api/google/")) {
           next();
           return;
@@ -165,7 +196,7 @@ function googleAuthApiPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), googleAuthApiPlugin()],
+  plugins: [companyApiPlugin(), react(), googleAuthApiPlugin()],
   server: {
     port: 5173,
     strictPort: true,

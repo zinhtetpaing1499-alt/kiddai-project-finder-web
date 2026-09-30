@@ -50,6 +50,7 @@ import {
   type ProjectSearchResult,
   type SellingCustomerFolderOption,
 } from "../services/googleApi";
+import { cellAt, fetchPublishedSheet } from "../services/publishedSheet";
 import {
   getStoredLinkSourceConfig,
   readCachedWorkspaceLinks,
@@ -61,7 +62,7 @@ import {
 } from "../utils/linksSheet";
 
 const DESIGNERS = ["Tod", "Do", "Kram", "Rung", "Han", "Steve", "Ton"] as const;
-const CUSTOMER_CACHE_VERSION = 1;
+const CUSTOMER_CACHE_VERSION = 2;
 const CUSTOMER_AUTO_SYNC_MS = 15_000;
 const MESSAGING_NOTI_POLL_MS = 12_000;
 
@@ -276,6 +277,71 @@ function parseDesignerCustomers(rows: WorkflowCell[][], mode: CustomerMode) {
   return records;
 }
 
+function sameDesigner(value: string, designer: string) {
+  return value.trim().toLocaleLowerCase() === designer.trim().toLocaleLowerCase();
+}
+
+function customersFromPublishedSheet(
+  rows: string[][],
+  mode: CustomerMode,
+  designer: DesignerName,
+) {
+  const records: CustomerRecord[] = [];
+
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] ?? [];
+    if (mode === "deposit") {
+      const projectNumber = cellAt(row, 0);
+      const customerName = cellAt(row, 2);
+      const owner = cellAt(row, 3);
+      if (!isProjectNumber(projectNumber) || !customerName || !sameDesigner(owner, designer)) continue;
+      records.push({
+        id: `deposit-${rowIndex + 1}-${projectNumber}`,
+        worksheetRow: rowIndex + 1,
+        projectNumber,
+        customerName,
+        customerUrl: "",
+        amount: cellAt(row, 4),
+        deadline: cellAt(row, 5),
+        installation: cellAt(row, 6),
+        woodColor: cellAt(row, 8),
+        confirmation: cellAt(row, 9),
+        queueNumber: projectNumber,
+        qc: cellAt(row, 11),
+        pieces: cellAt(row, 12),
+        sendCnc: cellAt(row, 14),
+      });
+      continue;
+    }
+
+    const projectNumber = cellAt(row, 0);
+    const customerName = cellAt(row, 2);
+    const owner = cellAt(row, 7);
+    const queued = [cellAt(row, 1), cellAt(row, 10)].some((value) => /^\d{3,}$/u.test(value));
+    if (!isProjectNumber(projectNumber) || !customerName || !sameDesigner(owner, designer) || queued) {
+      continue;
+    }
+    records.push({
+      id: `selling-${rowIndex + 1}-${projectNumber}`,
+      worksheetRow: rowIndex + 1,
+      projectNumber,
+      customerName,
+      customerUrl: "",
+      amount: cellAt(row, 3),
+      deadline: cellAt(row, 4),
+      installation: cellAt(row, 6),
+      woodColor: "",
+      confirmation: "",
+      queueNumber: "",
+      qc: "",
+      pieces: "",
+      sendCnc: "",
+    });
+  }
+
+  return records;
+}
+
 function statusLabel(value: string) {
   const trimmedValue = value.trim();
   return trimmedValue || "—";
@@ -434,23 +500,30 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       setLoadWarning("");
 
       try {
-        if (connection.status !== "Connected") {
-          const restoreResponse = await refreshGoogleConnection();
-          if (restoreResponse.errorMessage) {
-            throw new Error(restoreResponse.errorMessage);
-          }
-          if (!restoreResponse.connection || restoreResponse.connection.status !== "Connected") {
-            throw new Error("Connect Google in Settings before loading customer data.");
+        let nextRecords: CustomerRecord[] = [];
+        let fetchedAt = new Date().toISOString();
+
+        if (connection.status === "Connected") {
+          try {
+            const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, designer);
+            nextRecords = parseDesignerCustomers(worksheetRows.rows, mode);
+            fetchedAt = worksheetRows.fetchedAt;
+          } catch {
+            nextRecords = [];
           }
         }
 
-        const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, designer);
-        const nextRecords = parseDesignerCustomers(worksheetRows.rows, mode);
+        if (nextRecords.length === 0) {
+          const sheetName = mode === "deposit" ? "Deposit Stage" : "Selling Stage";
+          const publishedRows = await fetchPublishedSheet(spreadsheetId, sheetName);
+          nextRecords = customersFromPublishedSheet(publishedRows, mode, designer);
+        }
+
         const nextPayload: CustomerCachePayload = {
           version: CUSTOMER_CACHE_VERSION,
           mode,
           designer,
-          fetchedAt: worksheetRows.fetchedAt,
+          fetchedAt,
           records: nextRecords,
         };
 
@@ -460,7 +533,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
 
         writeCache(nextPayload);
         setRecords(nextRecords);
-        setFetchedAt(worksheetRows.fetchedAt);
+        setFetchedAt(fetchedAt);
       } catch (error) {
         if (requestId !== requestSequenceRef.current) {
           return;
@@ -478,7 +551,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         }
       }
     },
-    [connection.status, designer, mode, refreshGoogleConnection],
+    [connection.status, designer, mode],
   );
 
   useEffect(() => {
