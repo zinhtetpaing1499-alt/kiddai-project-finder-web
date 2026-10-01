@@ -12,6 +12,8 @@ messenger/data/
 server/company/data/
 dist
 dist-ssr
+kiddai-netlify-dist
+
 *.local
 .env
 .env.*

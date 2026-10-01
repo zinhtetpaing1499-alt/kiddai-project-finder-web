@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useGoogleConnection } from "../contexts/GoogleConnectionContext";
 import { completeGoogleConnectFromCallback } from "../services/googleAuth";
@@ -8,54 +8,50 @@ export function AuthCallbackPage() {
   const navigate = useNavigate();
   const { refreshGoogleConnection } = useGoogleConnection();
   const [message, setMessage] = useState("Finishing Google sign-in…");
+  const startedRef = useRef(false);
+
+  const error = searchParams.get("error");
+  const code = searchParams.get("code");
+  const state = searchParams.get("state");
 
   useEffect(() => {
-    let cancelled = false;
+    if (startedRef.current) {
+      return;
+    }
+    startedRef.current = true;
 
     async function finish() {
-      const error = searchParams.get("error");
-      const code = searchParams.get("code");
-      const state = searchParams.get("state");
-
       if (error) {
-        setMessage(`Google sign-in was cancelled or failed (${error}).`);
-        window.setTimeout(() => navigate("/settings", { replace: true }), 1600);
+        const text = `Google sign-in was cancelled or failed (${error}).`;
+        setMessage(text);
+        window.setTimeout(() => navigate("/settings", { replace: true, state: { googleError: text } }), 1600);
         return;
       }
 
       if (!code) {
-        setMessage("Missing Google authorization code.");
-        window.setTimeout(() => navigate("/settings", { replace: true }), 1600);
+        const text = "Missing Google authorization code. Try Connect again from Settings.";
+        setMessage(text);
+        window.setTimeout(() => navigate("/settings", { replace: true, state: { googleError: text } }), 1600);
         return;
       }
 
       try {
         await completeGoogleConnectFromCallback(code, state);
-        if (cancelled) {
-          return;
-        }
         await refreshGoogleConnection();
         setMessage("Google connected. Returning to Settings…");
         navigate("/settings", { replace: true });
       } catch (callbackError) {
-        if (cancelled) {
-          return;
-        }
-        setMessage(
+        const text =
           callbackError instanceof Error
             ? callbackError.message
-            : "Unable to complete Google sign-in.",
-        );
-        window.setTimeout(() => navigate("/settings", { replace: true }), 2200);
+            : "Unable to complete Google sign-in.";
+        setMessage(text);
+        window.setTimeout(() => navigate("/settings", { replace: true, state: { googleError: text } }), 2200);
       }
     }
 
     void finish();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [navigate, refreshGoogleConnection, searchParams]);
+  }, [code, error, navigate, refreshGoogleConnection, state]);
 
   return (
     <div className="page" style={{ padding: "48px 24px" }}>

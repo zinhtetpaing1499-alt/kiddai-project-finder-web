@@ -142,13 +142,20 @@ export function resolveTemplateSpreadsheetIdsFromRows(
       cellRef,
       rows,
     );
-    const spreadsheetIdMatch = workspaceLink.url.match(/\/spreadsheets\/d\/([^/?#]+)/i);
+    const templateIdMatch =
+      key === "present"
+        ? workspaceLink.url.match(/\/(?:spreadsheets|presentation)\/d\/([^/?#]+)/i)
+        : workspaceLink.url.match(/\/spreadsheets\/d\/([^/?#]+)/i);
 
-    if (!spreadsheetIdMatch?.[1]) {
-      throw new Error(`The ${LINK_TITLES[key]} link must point to a Google Sheet template.`);
+    if (!templateIdMatch?.[1]) {
+      throw new Error(
+        key === "present"
+          ? "The Present link must point to a Google Slides or Google Sheets template."
+          : `The ${LINK_TITLES[key]} link must point to a Google Sheets template.`,
+      );
     }
 
-    return spreadsheetIdMatch[1];
+    return templateIdMatch[1];
   };
 
   return {
