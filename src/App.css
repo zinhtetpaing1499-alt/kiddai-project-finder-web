@@ -112,6 +112,36 @@ a {
   transition: margin-left 220ms ease;
 }
 
+.app-shell--embedded {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-shell--embedded .app-shell__sidebar,
+.app-shell--embedded .sidebar-menu-button,
+.app-shell--embedded .sidebar-backdrop {
+  position: absolute;
+}
+
+.app-shell--embedded .app-shell__content {
+  height: 100%;
+  overflow: auto;
+}
+
+.app-shell--embedded .app-shell__frame {
+  min-height: calc(100% - 0px);
+}
+
+.app-shell--embedded.app-shell--sidebar-collapsed .sidebar-reopen-button {
+  position: absolute;
+}
+
+.app-shell--solo .app-shell__content {
+  margin-left: 0;
+}
+
 .app-shell__frame {
   display: flex;
   flex-direction: column;
@@ -2987,7 +3017,15 @@ a {
   white-space: nowrap;
 }
 .customer-name:hover { color: #75604f; text-decoration: underline; }
+.customer-name--unlinked,
+.customer-name--unlinked:hover {
+  color: #b42318;
+}
 .customer-table__amount { color: var(--text-primary); font-weight: 700; }
+.customer-deadline--over {
+  color: #b42318;
+  font-weight: 800;
+}
 .customer-status {
   display: inline-flex;
   min-width: 30px;
@@ -3165,6 +3203,17 @@ a {
 .customer-action:hover:not(:disabled) { border-color: var(--border-strong); color: var(--accent-strong); transform: none; }
 .customer-action--open { background: var(--accent); color: white; }
 .customer-action--open:hover:not(:disabled) { color: white; background: var(--accent-strong); }
+.customer-action--missing,
+.customer-action--open.customer-action--missing {
+  background: #b42318;
+  border-color: #b42318;
+  color: white;
+}
+.customer-action--missing:hover:not(:disabled),
+.customer-action--open.customer-action--missing:hover:not(:disabled) {
+  background: #8f1c14;
+  color: white;
+}
 .customer-action:disabled { cursor: wait; opacity: 0.45; }
 .customer-action--busy,
 .customer-action--busy:disabled {
@@ -3364,6 +3413,139 @@ a {
 }
 
 @media (max-width: 900px) {
+  .customer-workspace,
+  .customer-list-panel,
+  .customer-workspace__chrome,
+  .designer-picker,
+  .customer-list-toolbar,
+  .customer-list-toolbar__title-row,
+  .customer-search {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .designer-picker {
+    overflow: hidden;
+    padding: 8px 8px 6px;
+  }
+
+  .designer-picker__tabs {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    gap: 2px;
+    padding: 3px;
+  }
+
+  .designer-picker__tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .designer-picker__tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 7px 4px;
+    font-size: 0.8rem;
+  }
+
+  .customer-list-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px 10px;
+    padding: 10px 12px 12px;
+  }
+
+  .customer-list-toolbar__title-row {
+    display: contents;
+  }
+
+  .customer-list-toolbar__identity {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  .customer-count {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    white-space: nowrap;
+  }
+
+  .customer-view-switch--solo,
+  .customer-view-switch--stage {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .customer-view-switch--solo {
+    grid-row: 2;
+  }
+
+  .customer-view-switch--stage {
+    grid-row: 3;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  }
+
+  .customer-view-switch--solo .customer-view-switch__tab,
+  .customer-view-switch--stage .customer-view-switch__tab {
+    width: 100%;
+    min-width: 0;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.15;
+  }
+
+  .customer-list-toolbar:has(.customer-view-switch--stage > :only-child) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .customer-list-toolbar:has(.customer-view-switch--stage > :only-child) .customer-view-switch--solo {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .customer-list-toolbar:has(.customer-view-switch--stage > :only-child) .customer-view-switch--stage {
+    grid-column: 2;
+    grid-row: 2;
+    width: auto;
+  }
+
+  .customer-search {
+    overflow: hidden;
+  }
+
+  .customer-search input {
+    text-overflow: ellipsis;
+  }
+
+  .header__fullscreen-button {
+    display: none;
+  }
+
+  .app-shell--solo .app-shell__header {
+    padding-left: 14px;
+  }
+
+  .app-shell--solo .app-shell__content {
+    padding: 0;
+  }
+
+  .app-shell--solo .app-shell__frame {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    min-height: 100%;
+  }
+
   .sidebar-collapse-button,
   .sidebar-reopen-button {
     display: none;
@@ -3399,11 +3581,17 @@ a {
     transform: translateX(-105%);
     transition: transform 220ms ease;
     box-shadow: 12px 0 28px rgba(72, 57, 45, 0.14);
+    pointer-events: none;
+    z-index: 30;
   }
 
   .app-shell--sidebar-open .app-shell__sidebar {
     transform: translateX(0);
     pointer-events: auto;
+  }
+
+  .app-shell--sidebar-open .sidebar-header {
+    padding-left: 46px;
   }
 
   .app-shell__content {
@@ -3425,15 +3613,6 @@ a {
 
   .app-shell__frame {
     min-height: calc(100vh - 24px);
-  }
-
-  .designer-picker__tabs {
-    flex-wrap: wrap;
-  }
-
-  .customer-list-toolbar {
-    flex-direction: column;
-    align-items: flex-start;
   }
 
   .customer-table-wrap--selling {
@@ -3496,27 +3675,12 @@ a {
   .app-shell__frame { border-radius: 12px; }
   .app-shell__header { min-height: 60px; padding-right: 12px; }
 
-  .designer-picker { padding: 8px; }
-  .designer-picker__tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .designer-picker__tabs::-webkit-scrollbar { display: none; }
-  .designer-picker__tab { padding: 7px 10px; }
-  .customer-list-toolbar { gap: 10px; padding: 9px 10px 11px; }
-  .customer-list-toolbar__title-row { width: 100%; }
-  .customer-view-switch--stage {
-    display: grid;
-    width: 100%;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    margin-left: 0;
-  }
+  .designer-picker { padding: 8px 8px 4px; }
+  .customer-list-toolbar { gap: 8px; padding: 8px 10px 10px; }
   .customer-view-switch__tab {
     min-width: 0;
-    padding: 6px 7px;
-    font-size: 0.76rem;
-    white-space: normal;
+    padding: 7px 6px;
+    font-size: 0.78rem;
   }
   .customer-search { margin: 0 10px 10px; padding: 9px 10px; }
   .customer-notice { margin: 0 10px 10px; }

@@ -881,45 +881,167 @@ export async function findQcDestinationFolders(
   return candidates;
 }
 
+async function findFreezeFolder(designerFolderId: string, driveId?: string | null) {
+  const children = await listChildFolders(designerFolderId, driveId);
+  const preferred = ["freeze", "freezz", "freezed"];
+  for (const name of preferred) {
+    const match = children.find((folder) => folder.id && normalizeDriveName(folder.name ?? "") === name);
+    if (match?.id) {
+      return match;
+    }
+  }
+  return (
+    children.find((folder) => folder.id && normalizeDriveName(folder.name ?? "").includes("freez")) ?? null
+  );
+}
+
+function sellingFolderOptions(
+  children: DriveFile[],
+  folderPathPrefix: string,
+  parentName: string,
+): SellingCustomerFolderOption[] {
+  return children
+    .filter((folder) => folder.id && folder.name)
+    .map((folder) => ({
+      folderName: folder.name!,
+      folderPath: `${folderPathPrefix}/${folder.name}`,
+      folderId: folder.id!,
+      matchReason: `Inside ${parentName}`,
+    }));
+}
+
+function matchSellingCustomerFolders(options: SellingCustomerFolderOption[], customerName: string) {
+  const normalizedCustomer = normalizeDriveName(customerName);
+  const exact = options.filter((folder) => normalizeDriveName(folder.folderName) === normalizedCustomer);
+  if (exact.length > 0) {
+    return exact;
+  }
+  return options.filter((folder) => {
+    const normalizedName = normalizeDriveName(folder.folderName);
+    return normalizedName.includes(normalizedCustomer) || normalizedCustomer.includes(normalizedName);
+  });
+}
+
+async function moveDriveFolder(fileId: string, fromParentId: string, toParentId: string) {
+  if (fromParentId === toParentId) {
+    return;
+  }
+  const current = await googleFetch<{ parents?: string[] }>(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true&fields=parents`,
+  );
+  const parents = current.parents ?? [];
+  const params = new URLSearchParams({
+    supportsAllDrives: "true",
+    fields: "id,parents",
+  });
+  if (!parents.includes(toParentId)) {
+    params.set("addParents", toParentId);
+  }
+  if (parents.includes(fromParentId)) {
+    params.set("removeParents", fromParentId);
+  }
+  if (!params.has("addParents") && !params.has("removeParents")) {
+    return;
+  }
+  await googleFetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+    { method: "PATCH" },
+  );
+}
+
+export async function moveSellingCustomerFolder(
+  kiddai2FolderId: string,
+  designerFolderName: string,
+  customerName: string,
+  destination: "active" | "freeze",
+) {
+  const route = await resolveSellingDesignerRoute(kiddai2FolderId, designerFolderName);
+  const freezeFolder = await findFreezeFolder(route.designerFolderId, route.driveId);
+  if (!freezeFolder?.id) {
+    throw new Error(
+      `No Freeze folder next to Still Active for ${designerFolderName}. The sheet was updated, and the Drive folder was left in place.`,
+    );
+  }
+
+  const sourceId = destination === "freeze" ? route.stillActiveFolderId : freezeFolder.id;
+  const targetId = destination === "freeze" ? freezeFolder.id : route.stillActiveFolderId;
+  const sourceName = destination === "freeze" ? route.stillActiveFolderName : (freezeFolder.name ?? "Freeze");
+  const targetName = destination === "freeze" ? (freezeFolder.name ?? "Freeze") : route.stillActiveFolderName;
+  const pathPrefix = `Kiddai2/ลูกค้ารอเขียนแบบ/${designerFolderName}`;
+  const [sourceChildren, targetChildren] = await Promise.all([
+    listChildFolders(sourceId, route.driveId),
+    listChildFolders(targetId, route.driveId),
+  ]);
+  const alreadyThere = matchSellingCustomerFolders(
+    sellingFolderOptions(targetChildren, `${pathPrefix}/${targetName}`, targetName),
+    customerName,
+  );
+  const sourceMatches = matchSellingCustomerFolders(
+    sellingFolderOptions(sourceChildren, `${pathPrefix}/${sourceName}`, sourceName),
+    customerName,
+  );
+  if (alreadyThere.length > 1 || sourceMatches.length > 1) {
+    throw new Error(`More than one Drive folder matches “${customerName}”.`);
+  }
+  const folderId = alreadyThere[0]?.folderId || sourceMatches[0]?.folderId;
+  if (!folderId) {
+    throw new Error(`Drive folder for “${customerName}” was not found in ${sourceName}.`);
+  }
+  if (sourceMatches.length === 0 && alreadyThere.length === 1) {
+    return alreadyThere[0];
+  }
+
+  await moveDriveFolder(folderId, sourceId, targetId);
+  return {
+    ...sourceMatches[0],
+    folderPath: `${pathPrefix}/${targetName}/${sourceMatches[0].folderName}`,
+    matchReason: `Moved to ${targetName}`,
+  };
+}
+
 export async function findSellingCustomerFolders(
   kiddai2FolderId: string,
   designerFolderName: string,
   customerName: string,
 ): Promise<SellingCustomerFolderOption[]> {
   const route = await resolveSellingDesignerRoute(kiddai2FolderId, designerFolderName);
-  // Only list customer folders inside Still Active — never the designer root.
-  const children = await listChildFolders(route.stillActiveFolderId, route.driveId);
-  const normalizedCustomer = normalizeDriveName(customerName);
-  const options = children
-    .filter((folder) => folder.id && folder.name)
-    .map((folder) => ({
-      folderName: folder.name!,
-      folderPath: `Kiddai2/ลูกค้ารอเขียนแบบ/${designerFolderName}/Still Active/${folder.name}`,
-      folderId: folder.id!,
-      matchReason: `Inside ${route.stillActiveFolderName}`,
-    }));
-
-  const exact = options.filter((folder) => normalizeDriveName(folder.folderName) === normalizedCustomer);
-  if (exact.length > 0) {
-    return exact.map((folder) => ({
-      ...folder,
-      matchReason: `Exact match in ${route.stillActiveFolderName}`,
-    }));
+  const pathPrefix = `Kiddai2/ลูกค้ารอเขียนแบบ/${designerFolderName}`;
+  const stillActiveChildren = await listChildFolders(route.stillActiveFolderId, route.driveId);
+  const activeMatches = matchSellingCustomerFolders(
+    sellingFolderOptions(stillActiveChildren, `${pathPrefix}/${route.stillActiveFolderName}`, route.stillActiveFolderName),
+    customerName,
+  );
+  if (activeMatches.length > 0) {
+    return activeMatches;
   }
 
-  const close = options.filter((folder) => {
-    const normalizedName = normalizeDriveName(folder.folderName);
-    return normalizedName.includes(normalizedCustomer) || normalizedCustomer.includes(normalizedName);
-  });
-
-  if (close.length > 0) {
-    return close.map((folder) => ({
-      ...folder,
-      matchReason: `Similar name in ${route.stillActiveFolderName}`,
-    }));
+  const freezeFolder = await findFreezeFolder(route.designerFolderId, route.driveId);
+  if (!freezeFolder?.id) {
+    return [];
   }
+  const freezeChildren = await listChildFolders(freezeFolder.id, route.driveId);
+  return matchSellingCustomerFolders(
+    sellingFolderOptions(freezeChildren, `${pathPrefix}/${freezeFolder.name ?? "Freeze"}`, freezeFolder.name ?? "Freeze"),
+    customerName,
+  );
+}
 
-  return [];
+export async function listSellingCustomerFolderNames(
+  kiddai2FolderId: string,
+  designerFolderName: string,
+) {
+  const route = await resolveSellingDesignerRoute(kiddai2FolderId, designerFolderName);
+  const activeChildren = await listChildFolders(route.stillActiveFolderId, route.driveId);
+  const freezeFolder = await findFreezeFolder(route.designerFolderId, route.driveId);
+  const freezeChildren = freezeFolder?.id
+    ? await listChildFolders(freezeFolder.id, route.driveId)
+    : [];
+  const names = (folders: DriveFile[]) =>
+    folders.map((folder) => folder.name?.trim() ?? "").filter((name) => name.length > 0);
+  return {
+    active: names(activeChildren),
+    freeze: names(freezeChildren),
+  };
 }
 
 export const SELLING_DESIGNER_FOLDER_NAMES = {

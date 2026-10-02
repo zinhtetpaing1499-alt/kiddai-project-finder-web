@@ -1,8 +1,9 @@
 import { Menu, PanelLeft, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Outlet } from "react-router-dom";
 import { Header } from "../components/Header";
 import { Sidebar } from "../components/Sidebar";
+import type { WorkspaceRoute } from "../constants/workspace";
 
 const SIDEBAR_COLLAPSED_KEY = "kiddai-sidebar-collapsed";
 
@@ -14,7 +15,16 @@ function readDesktopCollapsed(): boolean {
   }
 }
 
-export function AppShell() {
+export function AppShell({
+  routes,
+  title,
+  children,
+}: {
+  routes?: WorkspaceRoute[];
+  title?: string;
+  children?: ReactNode;
+} = {}) {
+  const embedded = children != null;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [desktopCollapsed, setDesktopCollapsed] = useState(readDesktopCollapsed);
 
@@ -38,12 +48,14 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
+    if (embedded) return;
     document.body.classList.toggle("sidebar-open", mobileOpen);
     return () => document.body.classList.remove("sidebar-open");
-  }, [mobileOpen]);
+  }, [embedded, mobileOpen]);
 
   const shellClass = [
     "app-shell",
+    embedded ? "app-shell--embedded" : "",
     mobileOpen ? "app-shell--sidebar-open" : "",
     desktopCollapsed ? "app-shell--sidebar-collapsed" : "",
   ]
@@ -82,15 +94,14 @@ export function AppShell() {
       ) : null}
 
       <Sidebar
+        routes={routes}
         onNavigate={() => setMobileOpen(false)}
         onCollapse={() => persistDesktopCollapsed(true)}
       />
       <div className="app-shell__content">
         <div className="app-shell__frame">
-          <Header />
-          <main className="app-shell__main">
-            <Outlet />
-          </main>
+          <Header title={title} />
+          <main className="app-shell__main">{children ?? <Outlet />}</main>
         </div>
       </div>
     </div>

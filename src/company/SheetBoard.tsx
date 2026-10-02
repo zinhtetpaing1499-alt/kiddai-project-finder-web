@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { WORKFLOW_VIEWS, loadWorkflowTable, viewBySlug, type SheetTable } from "./workflowSheets";
+import { loadWorkflowTable, viewBySlug, type SheetTable, type WorkflowView } from "./workflowSheets";
 
-export function SheetBoard({ slug }: { slug?: string }) {
+export function SheetBoard({
+  slug,
+  tabs,
+  teamId,
+}: {
+  slug?: string;
+  tabs?: WorkflowView[];
+  teamId?: string;
+}) {
   const view = viewBySlug(slug);
   const [table, setTable] = useState<SheetTable | null>(null);
   const [error, setError] = useState("");
@@ -40,11 +48,11 @@ export function SheetBoard({ slug }: { slug?: string }) {
 
   return (
     <div className="company-board">
-      <div className="company-tabs company-tabs--wrap" role="tablist" aria-label="Workflow sheets">
-        {WORKFLOW_VIEWS.map((item) => (
+      {tabs && tabs.length > 1 ? <div className="company-tabs company-tabs--wrap" role="tablist" aria-label="Worksheets">
+        {tabs.map((item) => (
           <NavLink
             key={item.slug}
-            to={item.slug === "deposit" ? "/company/jobs" : `/company/departments/${item.slug}`}
+            to={`/company/departments/${teamId}/${item.slug}`}
             role="tab"
             aria-selected={item.slug === view.slug}
             className={item.slug === view.slug ? "company-tab company-tab--on" : "company-tab"}
@@ -52,7 +60,7 @@ export function SheetBoard({ slug }: { slug?: string }) {
             {item.label}
           </NavLink>
         ))}
-      </div>
+      </div> : null}
       <div className="company-board__bar">
         <p>{loading ? "Reading the sheet…" : `${rows.length} rows · ${view.sheetName}`}</p>
         <label className="company-search">

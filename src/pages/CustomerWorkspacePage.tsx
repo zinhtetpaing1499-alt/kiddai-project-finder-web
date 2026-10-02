@@ -20,6 +20,7 @@ import {
   fetchFacebookNotifications,
   markFacebookNotificationsRead,
   notificationAppliesToCustomer,
+  stripLineMarker,
   type FacebookNotification,
 } from "../services/facebookNotifications";
 import {
@@ -36,6 +37,9 @@ import {
   fetchWorkflowWorksheetsRows,
   findQcDestinationFolders,
   findSellingCustomerFolders,
+  listSellingCustomerFolderNames,
+  moveSellingCustomerFolder,
+  normalizeDriveName,
   importCsvIntoGoogleSheet,
   isRevisionStyleProjectFolder,
   listQcSheetsInFolder,
@@ -164,6 +168,7 @@ type DepositStageSnapshot = {
 };
 
 type DepositListView = "active" | "waiting" | "installing" | "finished";
+type SellingListView = "active" | "freeze";
 
 function isDepositStageView(view: DepositListView) {
   return view === "waiting" || view === "installing" || view === "finished";
@@ -401,6 +406,111 @@ function parseDesignerCustomers(rows: WorkflowCell[][], mode: CustomerMode) {
   return records;
 }
 
+function columnLetter(columnIndex: number) {
+  let value = columnIndex + 1;
+  let letters = "";
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    letters = String.fromCharCode(65 + remainder) + letters;
+    value = Math.floor((value - 1) / 26);
+  }
+  return letters;
+}
+
+function findSellingStageLayout(rows: WorkflowCell[][]) {
+  let headerRow = 0;
+  for (let rowIndex = 0; rowIndex < Math.min(rows.length, 8); rowIndex += 1) {
+    const joined = (rows[rowIndex] ?? [])
+      .map((cell) => cell.text.trim().toLocaleLowerCase())
+      .join(" | ");
+    const hasFreeze = joined.includes("freez");
+    const hasDesigner = joined.includes("designer") || joined.includes("ช่าง");
+    if (hasFreeze && hasDesigner) {
+      headerRow = rowIndex;
+      break;
+    }
+  }
+
+  const header = rows[headerRow] ?? [];
+  const findColumn = (needles: string[]) =>
+    header.findIndex((_, columnIndex) => {
+      const value = (header[columnIndex]?.text ?? "").trim().toLocaleLowerCase();
+      return needles.some((needle) => value.includes(needle));
+    });
+
+  return {
+    headerRow,
+    projectColumn: 0,
+    customerColumn: findColumn(["name", "ชื่อ"]) >= 0 ? findColumn(["name", "ชื่อ"]) : 2,
+    amountColumn: findColumn(["estimate", "price", "ราคา"]) >= 0 ? findColumn(["estimate", "price", "ราคา"]) : 3,
+    measurementColumn: findColumn(["measurement", "วัด"]) >= 0 ? findColumn(["measurement", "วัด"]) : 4,
+    installationColumn:
+      findColumn(["promised", "install", "คิวที่แจ้ง"]) >= 0
+        ? findColumn(["promised", "install", "คิวที่แจ้ง"])
+        : 6,
+    designerColumn: findColumn(["designer", "ช่างแบบ", "ช่าง"]) >= 0 ? findColumn(["designer", "ช่างแบบ", "ช่าง"]) : 7,
+    freezeColumn: findColumn(["freez"]) >= 0 ? findColumn(["freez"]) : 8,
+  };
+}
+
+function locateSellingFreezeCell(rows: WorkflowCell[][], projectNumber: string, ownerName: string) {
+  const layout = findSellingStageLayout(rows);
+  for (let rowIndex = layout.headerRow + 1; rowIndex < rows.length; rowIndex += 1) {
+    if (getCellText(rows, rowIndex, layout.projectColumn) !== projectNumber.trim()) {
+      continue;
+    }
+    const owner = getCellText(rows, rowIndex, layout.designerColumn);
+    if (owner && ownerName && !matchDepositStageOwner(owner, ownerName)) {
+      continue;
+    }
+    return { rowIndex, freezeColumn: layout.freezeColumn };
+  }
+  return null;
+}
+
+function parseSellingFreeze(rows: WorkflowCell[][]) {
+  const layout = findSellingStageLayout(rows);
+  const records: CustomerRecord[] = [];
+  for (let rowIndex = layout.headerRow + 1; rowIndex < rows.length; rowIndex += 1) {
+    if (!isPositiveStatus(getCellText(rows, rowIndex, layout.freezeColumn))) {
+      continue;
+    }
+    const customerName = getCellText(rows, rowIndex, layout.customerColumn);
+    const owner = getCellText(rows, rowIndex, layout.designerColumn);
+    const projectNumber = getCellText(rows, rowIndex, layout.projectColumn);
+    if (!customerName || !owner || !isProjectNumber(projectNumber)) {
+      continue;
+    }
+    records.push({
+      id: `selling-freeze-${rowIndex + 1}-${projectNumber}`,
+      worksheetRow: rowIndex + 1,
+      projectNumber,
+      customerName,
+      customerUrl: getCellUrl(rows, rowIndex, layout.customerColumn),
+      amount: getCellText(rows, rowIndex, layout.amountColumn),
+      deadline: getCellText(rows, rowIndex, layout.measurementColumn),
+      installation: getCellText(rows, rowIndex, layout.installationColumn),
+      woodColor: "",
+      confirmation: "",
+      queueNumber: "",
+      qc: "",
+      pieces: "",
+      sendCnc: "",
+      cncTeam: "",
+      owner,
+      finishedAt: "",
+    });
+  }
+  return records;
+}
+
+function folderNameMatchesCustomer(folderName: string, customerName: string) {
+  const folder = normalizeDriveName(folderName);
+  const customer = normalizeDriveName(customerName);
+  const withoutLineMarker = normalizeDriveName(stripLineMarker(customerName));
+  return folder.length > 0 && (folder === customer || folder === withoutLineMarker);
+}
+
 function statusLabel(value: string | null | undefined) {
   const trimmedValue = value?.trim() ?? "";
   return trimmedValue || "—";
@@ -422,6 +532,17 @@ function dateInputValue(value: string) {
     return "";
   }
   return `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+}
+
+function isOverdueDeadline(value: string, today = new Date()) {
+  const isoValue = dateInputValue(value);
+  if (!isoValue) {
+    return false;
+  }
+  const [year, month, day] = isoValue.split("-").map(Number);
+  const deadline = new Date(year, month - 1, day);
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return deadline < startOfToday;
 }
 
 function displayDateValue(value: string) {
@@ -552,6 +673,12 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const { connection, refreshGoogleConnection } = useGoogleConnection();
   const [designer, setDesigner] = useState<DesignerName>("Tod");
   const [depositView, setDepositView] = useState<DepositListView>("active");
+  const [sellingView, setSellingView] = useState<SellingListView>("active");
+  const [freezeAll, setFreezeAll] = useState<CustomerRecord[]>([]);
+  const [freezeReady, setFreezeReady] = useState(false);
+  const [freezeWarning, setFreezeWarning] = useState("");
+  const [folderPlaces, setFolderPlaces] = useState<{ active: string[]; freeze: string[] } | null>(null);
+  const [folderPlaceRevision, setFolderPlaceRevision] = useState(0);
   const [records, setRecords] = useState<CustomerRecord[]>([]);
   const [finishedAll, setFinishedAll] = useState<CustomerRecord[]>([]);
   const [query, setQuery] = useState("");
@@ -582,6 +709,10 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const destinationCacheRef = useRef(new Map<string, GoogleDriveFolderCandidate[]>());
   const sellingFolderCacheRef = useRef(new Map<string, ProjectSearchResult[]>());
   const depositStageSnapshotRef = useRef<DepositStageSnapshot | null>(null);
+  const sellingStageRef = useRef<{ worksheetName: string; rows: WorkflowCell[][] } | null>(null);
+  const sellingTapRef = useRef(new Map<string, { count: number; at: number }>());
+  const freezingProjectsRef = useRef(new Set<string>());
+  const returningProjectsRef = useRef(new Set<string>());
   const depositStageLoadRef = useRef<Promise<DepositStageSnapshot> | null>(null);
   const pendingCellValuesRef = useRef(new Map<string, string>());
   const cellWriteQueuesRef = useRef(new Map<string, Promise<void>>());
@@ -820,6 +951,85 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       cancelled = true;
     };
   }, [connection.status, designer, mode]);
+
+  useEffect(() => {
+    if (mode !== "selling") {
+      return;
+    }
+    let cancelled = false;
+
+    async function loadSellingFreeze() {
+      const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+      if (!spreadsheetId || connection.status !== "Connected") {
+        return;
+      }
+      try {
+        const metadata = await fetchSpreadsheetMetadata(spreadsheetId);
+        const worksheetName =
+          metadata.worksheetNames.find((name) => name.trim().toLocaleLowerCase() === "selling stage") ??
+          metadata.worksheetNames.find((name) => /selling\s*stage/i.test(name));
+        if (!worksheetName) {
+          throw new Error("Could not find the Selling Stage worksheet.");
+        }
+        const worksheetRows = await fetchWorkflowWorksheetRows(spreadsheetId, worksheetName);
+        if (!cancelled) {
+          sellingStageRef.current = { worksheetName, rows: worksheetRows.rows };
+          setFreezeAll(parseSellingFreeze(worksheetRows.rows));
+          setFreezeReady(true);
+          setFreezeWarning("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setFreezeReady(true);
+          setFreezeWarning(error instanceof Error ? error.message : "Could not load the Freeze list.");
+        }
+      }
+    }
+
+    void loadSellingFreeze();
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.status, mode]);
+
+  useEffect(() => {
+    if (mode !== "selling") {
+      setFolderPlaces(null);
+      return;
+    }
+    let cancelled = false;
+
+    async function loadFolderPlaces() {
+      if (connection.status !== "Connected") {
+        return;
+      }
+      try {
+        let kiddai2;
+        try {
+          kiddai2 = await resolveKiddai2Root(null);
+        } catch {
+          const configuredKiddai2 = window.localStorage.getItem(KIDDAI2_FOLDER_ID_KEY)?.trim() ?? "";
+          kiddai2 = await resolveKiddai2Root(configuredKiddai2 || null);
+        }
+        const places = await listSellingCustomerFolderNames(
+          kiddai2.folderId,
+          SELLING_DESIGNER_FOLDER_NAMES[designer],
+        );
+        if (!cancelled) {
+          setFolderPlaces(places);
+        }
+      } catch {
+        if (!cancelled) {
+          setFolderPlaces(null);
+        }
+      }
+    }
+
+    void loadFolderPlaces();
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.status, designer, folderPlaceRevision, mode]);
 
   const loadFinishedDepositStage = useCallback(
     async (background: boolean) => {
@@ -1076,8 +1286,19 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         (record) => classifyDepositInstallStatus(record.installation) === status,
       );
     }
+    if (mode === "selling" && sellingView === "freeze") {
+      return freezeAll.filter((record) => matchDepositStageOwner(record.owner, designer));
+    }
+    if (mode === "selling") {
+      const frozenNumbers = new Set(
+        freezeAll
+          .filter((record) => matchDepositStageOwner(record.owner, designer))
+          .map((record) => record.projectNumber),
+      );
+      return records.filter((record) => !frozenNumbers.has(record.projectNumber));
+    }
     return records;
-  }, [depositView, designer, finishedAll, mode, records]);
+  }, [depositView, designer, finishedAll, freezeAll, mode, records, sellingView]);
 
   const filteredRecords = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -1115,6 +1336,122 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     void reminderRevision;
     return countDistinctCustomersWithAlert(mode, designer, records, messagingNotifications);
   }, [designer, messagingNotifications, mode, records, reminderRevision]);
+
+  const freezeAlertCount = useMemo(() => {
+    void reminderRevision;
+    const owned = freezeAll.filter((record) => matchDepositStageOwner(record.owner, designer));
+    return countDistinctCustomersWithAlert(mode, designer, owned, messagingNotifications);
+  }, [designer, freezeAll, messagingNotifications, mode, reminderRevision]);
+
+  useEffect(() => {
+    if (mode !== "selling" || !freezeReady || messagingNotifications.length === 0) {
+      return;
+    }
+    const spreadsheetId = currentWorkflowSpreadsheetId();
+    const stage = sellingStageRef.current;
+    if (!spreadsheetId || !stage) {
+      return;
+    }
+    const messaging = freezeAll.filter(
+      (record) => notificationsForCustomer(messagingNotifications, record.customerName).length > 0,
+    );
+    if (messaging.length === 0) {
+      return;
+    }
+    let cancelled = false;
+
+    async function returnMessagingCustomers() {
+      for (const record of messaging) {
+        const projectKey = `${record.owner}:${record.projectNumber}`;
+        if (returningProjectsRef.current.has(projectKey) || freezingProjectsRef.current.has(record.projectNumber)) {
+          continue;
+        }
+        const ownerName = DESIGNERS.find((name) => matchDepositStageOwner(record.owner, name));
+        const located = locateSellingFreezeCell(stage!.rows, record.projectNumber, record.owner);
+        if (!ownerName || !located) {
+          continue;
+        }
+        returningProjectsRef.current.add(projectKey);
+        try {
+          if (connection.status !== "Connected") {
+            const restored = await refreshGoogleConnection();
+            if (restored.errorMessage || restored.connection?.status !== "Connected") {
+              throw new Error(restored.errorMessage || "Connect Google in Settings first.");
+            }
+          }
+          if (cancelled) {
+            return;
+          }
+          await updateWorkflowWorksheetCell(
+            spreadsheetId,
+            stage!.worksheetName,
+            `${columnLetter(located.freezeColumn)}${located.rowIndex + 1}`,
+            "",
+          );
+          const targetCell = stage!.rows[located.rowIndex]?.[located.freezeColumn];
+          if (targetCell) {
+            targetCell.text = "";
+          }
+          setFreezeAll((current) =>
+            current.filter(
+              (item) =>
+                item.projectNumber !== record.projectNumber || !matchDepositStageOwner(item.owner, record.owner),
+            ),
+          );
+          const restoredRecord: CustomerRecord = {
+            ...record,
+            id: `selling-active-${record.projectNumber}`,
+            owner: "",
+          };
+          const mergeRecord = (current: CustomerRecord[]) =>
+            current.some((item) => item.projectNumber === record.projectNumber) ? current : [...current, restoredRecord];
+          if (ownerName === designer) {
+            setRecords((current) => {
+              const next = mergeRecord(current);
+              writeCache({
+                version: CUSTOMER_CACHE_VERSION,
+                spreadsheetId,
+                mode: "selling",
+                designer: ownerName,
+                fetchedAt: new Date().toISOString(),
+                records: next,
+              });
+              return next;
+            });
+          } else {
+            const saved = readCache("selling", ownerName);
+            writeCache({
+              version: CUSTOMER_CACHE_VERSION,
+              spreadsheetId,
+              mode: "selling",
+              designer: ownerName,
+              fetchedAt: saved?.fetchedAt || new Date().toISOString(),
+              records: mergeRecord(saved?.records ?? []),
+            });
+            setDesignerCacheEpoch((value) => value + 1);
+          }
+          try {
+            await relocateCustomerFolder(record.customerName, ownerName, "active");
+          } catch (folderError) {
+            if (!cancelled) {
+              setActionError(getErrorMessage(folderError));
+            }
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setActionError(`Could not move ${record.customerName} back to Selling: ${getErrorMessage(error)}`);
+          }
+        } finally {
+          returningProjectsRef.current.delete(projectKey);
+        }
+      }
+    }
+
+    void returnMessagingCustomers();
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.status, designer, freezeAll, freezeReady, messagingNotifications, mode, refreshGoogleConnection]);
 
   async function resolveTemplateSpreadsheetIds() {
     const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
@@ -1509,11 +1846,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     try {
       openDriveFolder(folder.folderId);
       setPendingFolderOpen(null);
-      setActionMessage(
-        mode === "selling"
-          ? `Opened ${designer} → Still Active → ${folder.folderName} in Google Drive.`
-          : `Opened · ${folder.folderName}`,
-      );
     } finally {
       setBusyActionKey("");
     }
@@ -1720,6 +2052,206 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     } finally {
       setBusyActionKey("");
     }
+  }
+
+  async function relocateCustomerFolder(
+    customerName: string,
+    designerName: DesignerName,
+    destination: "active" | "freeze",
+  ) {
+    let kiddai2;
+    try {
+      kiddai2 = await resolveKiddai2Root(null);
+    } catch {
+      const configuredKiddai2 = window.localStorage.getItem(KIDDAI2_FOLDER_ID_KEY)?.trim() ?? "";
+      kiddai2 = await resolveKiddai2Root(configuredKiddai2 || null);
+    }
+    window.localStorage.setItem(KIDDAI2_FOLDER_ID_KEY, kiddai2.folderId);
+    const designerFolderName = SELLING_DESIGNER_FOLDER_NAMES[designerName];
+    sellingFolderCacheRef.current.delete(
+      `${kiddai2.folderId}::${designerFolderName}::${customerName.toLocaleLowerCase()}`,
+    );
+    await moveSellingCustomerFolder(kiddai2.folderId, designerFolderName, customerName, destination);
+    setFolderPlaceRevision((value) => value + 1);
+  }
+
+  async function freezeSellingCustomer(record: CustomerRecord) {
+    if (mode !== "selling" || sellingView !== "active" || freezingProjectsRef.current.has(record.projectNumber)) {
+      return;
+    }
+    const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
+    const stage = sellingStageRef.current;
+    if (!spreadsheetId || !stage) {
+      setActionError("The Selling Stage sheet is still loading. Tap the project number 5 times again in a moment.");
+      return;
+    }
+    const layout = findSellingStageLayout(stage.rows);
+    let matchedRow = -1;
+    for (let rowIndex = layout.headerRow + 1; rowIndex < stage.rows.length; rowIndex += 1) {
+      const projectNumber = getCellText(stage.rows, rowIndex, layout.projectColumn);
+      if (projectNumber !== record.projectNumber.trim()) {
+        continue;
+      }
+      const owner = getCellText(stage.rows, rowIndex, layout.designerColumn);
+      if (owner && !matchDepositStageOwner(owner, designer)) {
+        continue;
+      }
+      matchedRow = rowIndex;
+      break;
+    }
+    if (matchedRow < 0) {
+      setActionError(`Project ${record.projectNumber} was not found on Selling Stage.`);
+      return;
+    }
+
+    const frozenRecord: CustomerRecord = {
+      ...record,
+      id: `selling-freeze-${matchedRow + 1}-${record.projectNumber}`,
+      worksheetRow: matchedRow + 1,
+      owner: designer,
+    };
+    freezingProjectsRef.current.add(record.projectNumber);
+    setActionError("");
+    setFreezeAll((current) => [
+      frozenRecord,
+      ...current.filter(
+        (item) => item.projectNumber !== record.projectNumber || !matchDepositStageOwner(item.owner, designer),
+      ),
+    ]);
+    try {
+      if (connection.status !== "Connected") {
+        const restored = await refreshGoogleConnection();
+        if (restored.errorMessage || restored.connection?.status !== "Connected") {
+          throw new Error(restored.errorMessage || "Connect Google in Settings first.");
+        }
+      }
+      const savedValue = await updateWorkflowWorksheetCell(
+        spreadsheetId,
+        stage.worksheetName,
+        `${columnLetter(layout.freezeColumn)}${matchedRow + 1}`,
+        "Yes",
+      );
+      const targetCell = stage.rows[matchedRow]?.[layout.freezeColumn];
+      if (targetCell) {
+        targetCell.text = savedValue || "Yes";
+      }
+      try {
+        await relocateCustomerFolder(record.customerName, designer, "freeze");
+      } catch (folderError) {
+        setActionError(getErrorMessage(folderError));
+      }
+    } catch (error) {
+      setFreezeAll((current) => current.filter((item) => item.id !== frozenRecord.id));
+      setActionError(`Could not freeze this customer: ${getErrorMessage(error)}`);
+    } finally {
+      freezingProjectsRef.current.delete(record.projectNumber);
+    }
+  }
+
+  async function returnFrozenCustomer(record: CustomerRecord) {
+    if (mode !== "selling" || sellingView !== "freeze") {
+      return;
+    }
+    const ownerName = DESIGNERS.find((name) => matchDepositStageOwner(record.owner || designer, name)) ?? designer;
+    const projectKey = `${ownerName}:${record.projectNumber}`;
+    if (returningProjectsRef.current.has(projectKey) || freezingProjectsRef.current.has(record.projectNumber)) {
+      return;
+    }
+    const spreadsheetId = currentWorkflowSpreadsheetId();
+    const stage = sellingStageRef.current;
+    if (!spreadsheetId || !stage) {
+      setActionError("The Selling Stage sheet is still loading. Tap the project number 5 times again in a moment.");
+      return;
+    }
+    const located = locateSellingFreezeCell(stage.rows, record.projectNumber, ownerName);
+    if (!located) {
+      setActionError(`Project ${record.projectNumber} was not found on Selling Stage.`);
+      return;
+    }
+
+    const restoredRecord: CustomerRecord = {
+      ...record,
+      id: `selling-active-${record.projectNumber}`,
+      owner: "",
+    };
+    returningProjectsRef.current.add(projectKey);
+    setActionError("");
+    setFreezeAll((current) =>
+      current.filter(
+        (item) => item.projectNumber !== record.projectNumber || !matchDepositStageOwner(item.owner, ownerName),
+      ),
+    );
+    setRecords((current) => {
+      const next = current.some((item) => item.projectNumber === record.projectNumber)
+        ? current
+        : [...current, restoredRecord];
+      writeCache({
+        version: CUSTOMER_CACHE_VERSION,
+        spreadsheetId,
+        mode: "selling",
+        designer: ownerName,
+        fetchedAt: new Date().toISOString(),
+        records: next,
+      });
+      return next;
+    });
+
+    try {
+      if (connection.status !== "Connected") {
+        const restored = await refreshGoogleConnection();
+        if (restored.errorMessage || restored.connection?.status !== "Connected") {
+          throw new Error(restored.errorMessage || "Connect Google in Settings first.");
+        }
+      }
+      await updateWorkflowWorksheetCell(
+        spreadsheetId,
+        stage.worksheetName,
+        `${columnLetter(located.freezeColumn)}${located.rowIndex + 1}`,
+        "",
+      );
+      const targetCell = stage.rows[located.rowIndex]?.[located.freezeColumn];
+      if (targetCell) {
+        targetCell.text = "";
+      }
+      try {
+        await relocateCustomerFolder(record.customerName, ownerName, "active");
+      } catch (folderError) {
+        setActionError(getErrorMessage(folderError));
+      }
+    } catch (error) {
+      setFreezeAll((current) => [record, ...current.filter((item) => item.projectNumber !== record.projectNumber)]);
+      setRecords((current) => {
+        const next = current.filter((item) => item.id !== restoredRecord.id);
+        writeCache({
+          version: CUSTOMER_CACHE_VERSION,
+          spreadsheetId,
+          mode: "selling",
+          designer: ownerName,
+          fetchedAt: new Date().toISOString(),
+          records: next,
+        });
+        return next;
+      });
+      setActionError(`Could not move this customer back to Selling: ${getErrorMessage(error)}`);
+    } finally {
+      returningProjectsRef.current.delete(projectKey);
+    }
+  }
+
+  function onSellingProjectClick(record: CustomerRecord) {
+    const now = Date.now();
+    const previous = sellingTapRef.current.get(record.id);
+    const count = previous && now - previous.at < 800 ? previous.count + 1 : 1;
+    if (count >= 5) {
+      sellingTapRef.current.delete(record.id);
+      if (sellingView === "freeze") {
+        void returnFrozenCustomer(record);
+      } else {
+        void freezeSellingCustomer(record);
+      }
+      return;
+    }
+    sellingTapRef.current.set(record.id, { count, at: now });
   }
 
   function depositCellKey(record: CustomerRecord, field: EditableDepositField) {
@@ -1933,6 +2465,14 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }
 
+  function folderInCorrectPlace(customerName: string) {
+    if (mode !== "selling" || !folderPlaces) {
+      return true;
+    }
+    const names = sellingView === "freeze" ? folderPlaces.freeze : folderPlaces.active;
+    return names.some((folderName) => folderNameMatchesCustomer(folderName, customerName));
+  }
+
   function actionButton(
     record: CustomerRecord,
     action: CustomerAction,
@@ -1940,16 +2480,18 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     icon: "folder" | "sheet" | "presentation",
   ) {
     const isBusy = busyActionKey === `${record.id}:${action}`;
+    const missingFolder = icon === "folder" && !folderInCorrectPlace(record.customerName);
     const Icon = icon === "folder" ? FolderOpen : icon === "presentation" ? Presentation : Sheet;
+    const placeName = sellingView === "freeze" ? "Freeze" : "Still Active";
     return (
       <button
-        className={`customer-action customer-action--${action}${isBusy ? " customer-action--busy" : ""}`}
+        className={`customer-action customer-action--${action}${missingFolder ? " customer-action--missing" : ""}${isBusy ? " customer-action--busy" : ""}`}
         type="button"
         onClick={() => void beginCustomerAction(record, action)}
         disabled={Boolean(busyActionKey)}
         aria-busy={isBusy}
-        aria-label={isBusy ? `Working on ${label}` : label}
-        title={label}
+        aria-label={isBusy ? `Working on ${label}` : missingFolder ? `No folder in ${placeName}` : label}
+        title={missingFolder ? `No folder in ${placeName}` : label}
       >
         {isBusy ? <LoaderCircle className="customer-action__spinner" size={14} /> : <Icon size={14} />}
         <span className="customer-action__label">{isBusy ? "Working…" : label}</span>
@@ -2015,14 +2557,19 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                 </>
               ) : (
                 <>
-                  <h2 className="customer-list-toolbar__identity">
-                    {designer}
-                    <span className="customer-list-toolbar__dot">·</span>
-                    <span className="customer-list-toolbar__mode">
+                  <h2 className="customer-list-toolbar__identity">{designer}</h2>
+                  <div className="customer-view-switch customer-view-switch--solo" role="tablist" aria-label="Selling list">
+                    <button
+                      className={`customer-view-switch__tab${sellingView === "active" ? " customer-view-switch__tab--active" : ""}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={sellingView === "active"}
+                      onClick={() => setSellingView("active")}
+                    >
                       Selling
                       {tabNotiBadge(activeListAlertCount)}
-                    </span>
-                  </h2>
+                    </button>
+                  </div>
                   <span className="customer-count">{filteredRecords.length} customers</span>
                 </>
               )}
@@ -2060,7 +2607,20 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   {tabNotiBadge(stageAlertCounts.finished)}
                 </button>
               </div>
-            ) : null}
+            ) : (
+              <div className="customer-view-switch customer-view-switch--stage" role="tablist" aria-label="Freeze list">
+                <button
+                  className={`customer-view-switch__tab${sellingView === "freeze" ? " customer-view-switch__tab--active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={sellingView === "freeze"}
+                  onClick={() => setSellingView("freeze")}
+                >
+                  Freeze
+                  {tabNotiBadge(freezeAlertCount)}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2069,7 +2629,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
           <input
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search project number or customer name…"
+            placeholder="Search project or name"
             aria-label="Search customers"
           />
           {query ? (
@@ -2080,17 +2640,26 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         </div>
 
         {loadWarning ? <div className="customer-notice customer-notice--warning">{loadWarning}</div> : null}
+        {mode === "selling" && sellingView === "freeze" && freezeWarning ? (
+          <div className="customer-notice customer-notice--warning">{freezeWarning}</div>
+        ) : null}
         {actionMessage ? <div className="customer-notice customer-notice--success">{actionMessage}</div> : null}
         {actionError ? <div className="customer-notice customer-notice--error">{actionError}</div> : null}
 
         {isInitialLoading &&
-        (isDepositStageView(depositView) ? finishedAll.length === 0 : records.length === 0) ? (
+        (isDepositStageView(depositView)
+          ? finishedAll.length === 0
+          : mode === "selling" && sellingView === "freeze"
+            ? !freezeReady
+            : records.length === 0) ? (
           <div className="customer-empty-state">
             <LoaderCircle className="customer-action__spinner" size={28} />
             <strong>
               {isDepositStageView(depositView)
                 ? "Loading customers from Deposit Stage"
-                : `Loading ${designer} customer data`}
+                : mode === "selling" && sellingView === "freeze"
+                  ? "Loading Freeze customers from Selling Stage"
+                  : `Loading ${designer} customer data`}
             </strong>
             <span>The list will be saved locally after this first load.</span>
           </div>
@@ -2099,24 +2668,28 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
             <strong>
               {query
                 ? "No customers match this search"
-                : depositView === "waiting"
+                : mode === "deposit" && depositView === "waiting"
                   ? `No customers waiting to install for ${designer}`
-                  : depositView === "installing"
+                  : mode === "deposit" && depositView === "installing"
                     ? `No customers currently installing for ${designer}`
-                    : depositView === "finished"
+                    : mode === "deposit" && depositView === "finished"
                       ? `No finished customers for ${designer}`
-                      : "No customer rows found"}
+                      : mode === "selling" && sellingView === "freeze"
+                        ? `No Freeze customers for ${designer}`
+                        : "No customer rows found"}
             </strong>
             <span>
               {query
                 ? "Try a different project number or customer name."
-                : depositView === "waiting"
+                : mode === "deposit" && depositView === "waiting"
                   ? "Green Deposit Stage rows whose Install date is still in the future."
-                  : depositView === "installing"
+                  : mode === "deposit" && depositView === "installing"
                     ? "Green Deposit Stage rows from Install date through 5 days after."
-                    : depositView === "finished"
+                    : mode === "deposit" && depositView === "finished"
                       ? "Green Deposit Stage rows whose Install date was more than 5 days ago."
-                      : `Check the ${designer} worksheet layout in Settings.`}
+                      : mode === "selling" && sellingView === "freeze"
+                        ? "Selling Stage rows for this designer whose Freeze column is Yes."
+                        : `Check the ${designer} worksheet layout in Settings.`}
             </span>
           </div>
         ) : (
@@ -2182,6 +2755,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   const latestPreview = unreadForRow[0]?.preview;
                   const rowClass = hasAlert ? "customer-row--unread" : undefined;
                   const nameUnreadClass = hasAlert ? " customer-name--unread" : "";
+                  const missingContact = !record.customerUrl.trim();
+                  const missingFolder = mode === "selling" && !folderInCorrectPlace(record.customerName);
+                  const nameUnlinkedClass = missingContact || missingFolder ? " customer-name--unlinked" : "";
                   return (
                   <tr key={record.id} className={rowClass}>
                     <td data-label="Project">
@@ -2194,11 +2770,21 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                           }
                         }}
                         onClick={(event) => {
+                          if (mode === "selling") {
+                            onSellingProjectClick(record);
+                            return;
+                          }
                           if (event.detail === 3) {
                             toggleReminder(record);
                           }
                         }}
-                        title="Triple-click to show or hide the reminder"
+                        title={
+                          mode === "selling" && sellingView === "freeze"
+                            ? "Tap 5 times to move this customer back to Selling"
+                            : mode === "selling"
+                              ? "Tap 5 times to move this customer to Freeze"
+                              : "Triple-click to show or hide the reminder"
+                        }
                       >
                         {record.projectNumber}
                       </button>
@@ -2217,11 +2803,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                           </button>
                         ) : null}
                         <button
-                          className={`customer-name${nameUnreadClass}`}
+                          className={`customer-name${nameUnreadClass}${nameUnlinkedClass}`}
                           type="button"
                           onClick={() => void openCustomerContact(record)}
                           title={
-                            hasRemind
+                            missingContact
+                              ? "No Facebook or LINE link on this customer"
+                              : missingFolder
+                                ? `No folder in ${sellingView === "freeze" ? "Freeze" : "Still Active"}`
+                              : hasRemind
                               ? "Check this customer again"
                               : latestPreview
                                 ? `New message: ${latestPreview}`
@@ -2247,7 +2837,21 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                       </div>
                     </td>
                     <td className="customer-table__amount" data-label={mode === "selling" ? "Estimate Price" : "Amount"}>{statusLabel(record.amount)}</td>
-                    <td data-label={mode === "selling" ? "Measurement" : "Deadline"}>{statusLabel(record.deadline)}</td>
+                    <td
+                      data-label={mode === "selling" ? "Measurement" : "Deadline"}
+                      className={
+                        mode === "deposit" && depositView === "active" && isOverdueDeadline(record.deadline)
+                          ? "customer-deadline--over"
+                          : undefined
+                      }
+                      title={
+                        mode === "deposit" && depositView === "active" && isOverdueDeadline(record.deadline)
+                          ? "Over deadline"
+                          : undefined
+                      }
+                    >
+                      {statusLabel(record.deadline)}
+                    </td>
                     <td data-label="Installation">{statusLabel(record.installation)}</td>
                     {mode === "deposit" && depositView === "finished" ? (
                       <td data-label="Finished">{statusLabel(record.finishedAt)}</td>

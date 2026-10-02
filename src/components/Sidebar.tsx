@@ -1,13 +1,14 @@
 import { PanelLeftClose } from "lucide-react";
 import { NavLink } from "react-router-dom";
-import { workspaceRoutes } from "../constants/workspace";
+import { workspaceRoutes, type WorkspaceRoute } from "../constants/workspace";
 
 type SidebarProps = {
+  routes?: WorkspaceRoute[];
   onNavigate?: () => void;
   onCollapse?: () => void;
 };
 
-export function Sidebar({ onNavigate, onCollapse }: SidebarProps) {
+export function Sidebar({ routes = workspaceRoutes, onNavigate, onCollapse }: SidebarProps) {
   return (
     <aside className="app-shell__sidebar">
       <div className="app-shell__sidebar-inner">
@@ -33,7 +34,7 @@ export function Sidebar({ onNavigate, onCollapse }: SidebarProps) {
 
         <div className="sidebar-section">
           <nav className="sidebar-nav" aria-label="Primary">
-            {workspaceRoutes.map(({ label, to, icon: Icon }) => (
+            {routes.map(({ label, to, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}

@@ -163,7 +163,7 @@ export const WORKFLOW_VIEWS: WorkflowView[] = [
     slug: "store",
     label: "สโตร์",
     sheetName: "สโตร์",
-    headerRow: 0,
+    headerRow: 1,
     requiredIndex: 0,
     columns: [
       { label: "เลขเคส", index: 0 },

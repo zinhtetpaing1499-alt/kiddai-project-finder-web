@@ -39,9 +39,10 @@ async function exitFullscreen() {
   }
 }
 
-export function Header() {
+export function Header({ title }: { title?: string }) {
   const { pathname } = useLocation();
   const meta = workspaceRouteMeta[pathname] ?? workspaceRouteMeta["/deposit-customers"];
+  const heading = title ?? meta.title;
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
@@ -63,7 +64,7 @@ export function Header() {
     <header className="app-shell__header">
       <div className="header__leading">
         <div className="header__title-wrap">
-          <h1 className="header__title">{meta.title}</h1>
+          <h1 className="header__title">{heading}</h1>
         </div>
       </div>
       <button

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
-import { ArrowLeft, FileText, Image, Pin, Search, Send, Video, X } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { ArrowLeft, FileText, Image, Info, Phone, Pin, Search, Send, Video, X } from "lucide-react";
+import { MediaViewer, type ViewableMedia } from "./MediaViewer";
+import { ProjectCall } from "./ProjectCall";
 import {
   CompanyApiError,
   fetchInbox,
@@ -12,16 +13,7 @@ import {
 import { CompanyShell } from "./CompanyApp";
 import { useCompanySession } from "./session";
 import { findSheetJob, useSheetJobs } from "./workflowJobs";
-import type { ChatMessage, GroupThread, InboxGroup, InboxTab } from "./types";
-
-const TABS: { id: InboxTab; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "unread", label: "Unread" },
-  { id: "mine", label: "My Projects" },
-  { id: "install", label: "Install" },
-];
-
-const PIPELINE = ["Estimate", "Measure", "Selling", "Deposit", "Drawing", "Workshop", "Install"];
+import type { ChatMessage, GroupThread, InboxGroup } from "./types";
 
 function formatClock(value: string) {
   const date = new Date(value);
@@ -59,7 +51,7 @@ function dayLabel(value: string) {
 }
 
 function jobTitle(jobRef: string | null) {
-  return jobRef ? `Job ${jobRef}` : "Job";
+  return jobRef ? `Job ${jobRef}` : "Project";
 }
 
 function projectTitle(group: InboxGroup) {
@@ -67,37 +59,14 @@ function projectTitle(group: InboxGroup) {
   return group.name;
 }
 
-function projectMeta(group: InboxGroup) {
-  const when = group.installDate ? formatDay(group.installDate) : "";
-  return [group.stage, when].filter(Boolean).join(" · ");
-}
-
-function serverTab(tab: InboxTab): InboxTab {
-  if (tab === "mine" || tab === "install") return "all";
-  return tab;
-}
-
 function errorText(reason: unknown) {
   return reason instanceof Error ? reason.message : "The inbox could not be loaded.";
-}
-
-function stageIndex(stage: string | null | undefined) {
-  if (!stage) return -1;
-  return PIPELINE.findIndex((item) => item.toLowerCase() === stage.toLowerCase());
 }
 
 export function InboxPage() {
   const session = useCompanySession();
   const sheet = useSheetJobs();
-  const [params, setParams] = useSearchParams();
-  const tabParam = params.get("tab");
-  const tab: InboxTab =
-    tabParam === "unread" || tabParam === "mine" || tabParam === "install" || tabParam === "groups" || tabParam === "communities"
-      ? tabParam
-      : "all";
-  const isAdmin = session.user.roles.includes("admin") || session.user.role === "admin";
   const [groups, setGroups] = useState<InboxGroup[]>([]);
-  const [unreadTotal, setUnreadTotal] = useState(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [thread, setThread] = useState<GroupThread | null>(null);
   const [pane, setPane] = useState<"list" | "chat" | "job">("list");
@@ -105,37 +74,27 @@ export function InboxPage() {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
-  const [workOrder, setWorkOrder] = useState(false);
-  const [prepare, setPrepare] = useState("");
+  const [viewer, setViewer] = useState<ViewableMedia | null>(null);
+  const [callRequest, setCallRequest] = useState<"audio" | "video" | null>(null);
   const [error, setError] = useState("");
   const [listError, setListError] = useState("");
   const [sending, setSending] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<number | null>(null);
-  const tabRef = useRef<InboxTab>(tab);
   const didAutoOpen = useRef(false);
   const expireRef = useRef(session.expire);
   selectedRef.current = selectedId;
-  tabRef.current = tab;
   expireRef.current = session.expire;
-
-  function selectTab(next: InboxTab) {
-    const nextParams = new URLSearchParams(params);
-    if (next === "all") nextParams.delete("tab");
-    else nextParams.set("tab", next);
-    setParams(nextParams, { replace: true });
-  }
 
   useEffect(() => {
     let stopped = false;
 
     async function refresh() {
       try {
-        const inbox = await fetchInbox(serverTab(tabRef.current));
+        const inbox = await fetchInbox("all");
         if (stopped) return;
         setGroups(inbox.groups);
-        setUnreadTotal(inbox.unreadTotal);
         setListError("");
         const currentId = selectedRef.current;
         if (
@@ -154,10 +113,9 @@ export function InboxPage() {
         if (stopped) return;
         setThread(nextThread);
         await markGroupRead(currentId);
-        const again = await fetchInbox(serverTab(tabRef.current));
+        const again = await fetchInbox("all");
         if (stopped) return;
         setGroups(again.groups);
-        setUnreadTotal(again.unreadTotal);
       } catch (reason) {
         if (stopped) return;
         if (reason instanceof CompanyApiError && reason.status === 401) {
@@ -174,7 +132,7 @@ export function InboxPage() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [tab, selectedId]);
+  }, [selectedId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -204,27 +162,23 @@ export function InboxPage() {
     event.preventDefault();
     if (!selectedId || sending) return;
     const body = text.trim();
-    if (!body && files.length === 0 && !prepare.trim()) return;
+    if (!body && files.length === 0) return;
     setSending(true);
     setError("");
     try {
       const nextThread = await sendMessage(selectedId, {
         body,
         files,
-        kind: workOrder ? "work_order" : "message",
-        prepare: workOrder ? prepare : "",
+        kind: "message",
         replyTo: replyTo?.id,
       });
       setThread(nextThread);
       setText("");
       setFiles([]);
-      setPrepare("");
       setReplyTo(null);
-      setWorkOrder(false);
       if (fileRef.current) fileRef.current.value = "";
-      const inbox = await fetchInbox(serverTab(tab));
+      const inbox = await fetchInbox("all");
       setGroups(inbox.groups);
-      setUnreadTotal(inbox.unreadTotal);
     } catch (reason) {
       if (reason instanceof CompanyApiError && reason.status === 401) {
         session.expire();
@@ -239,8 +193,6 @@ export function InboxPage() {
   const visibleGroups = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return groups.filter((group) => {
-      if (tab === "mine" && !group.member) return false;
-      if (tab === "install" && group.stage?.toLowerCase() !== "install") return false;
       if (!needle) return true;
       const haystack = [group.name, group.customerName, group.jobRef, group.designerName, group.lastMessage?.preview, group.lastMessage?.senderName]
         .filter(Boolean)
@@ -248,7 +200,7 @@ export function InboxPage() {
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [groups, query, tab]);
+  }, [groups, query]);
 
   const openThread = thread && thread.group.id === selectedId ? thread : null;
   const job = openThread?.group.job ?? null;
@@ -257,30 +209,15 @@ export function InboxPage() {
   const list = (
     <div className="company-inbox" data-testid="company-inbox">
       <header className="company-inbox__head">
-        <h1>Inbox</h1>
+        <h1>Chats</h1>
       </header>
-      <div className="company-tabs" role="tablist" aria-label="Inbox">
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === item.id}
-            className={tab === item.id ? "company-tab company-tab--on" : "company-tab"}
-            onClick={() => selectTab(item.id)}
-          >
-            {item.label}
-            {item.id === "unread" && unreadTotal > 0 ? <span className="company-count">{unreadTotal}</span> : null}
-          </button>
-        ))}
-      </div>
       <label className="company-search">
         <Search size={16} />
         <span className="company-sr">Search conversations</span>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search queue, customer, or designer"
+          placeholder="Search"
         />
       </label>
       {listError ? (
@@ -290,13 +227,7 @@ export function InboxPage() {
       ) : null}
       {visibleGroups.length === 0 ? (
         <p className="company-empty" data-testid="inbox-empty">
-          {query
-            ? "No conversations match."
-            : tab === "communities"
-              ? "No communities yet."
-              : tab === "unread"
-                ? "No unread messages."
-                : "No groups yet. You only see groups you are in."}
+          {query ? "No conversations match." : "No project chats yet."}
         </p>
       ) : (
         <ul className="company-groups">
@@ -320,10 +251,6 @@ export function InboxPage() {
                     <span className="company-row__time">
                       {group.lastMessage ? formatListTime(group.lastMessage.createdAt) : ""}
                     </span>
-                  </span>
-                  <span className="company-row__sub">
-                    {projectMeta(group)}
-                    {group.designerName ? ` · ${group.designerName}` : ""}
                   </span>
                   <span className="company-row__preview">
                     {group.lastMessage
@@ -352,30 +279,25 @@ export function InboxPage() {
         </span>
         <div className="company-thread__title">
           <h1>{job ? `${job.jobRef} · ${job.customerName}` : openThread.group.name}</h1>
-          <p>
-            {[job?.stage, job?.installDate ? formatDay(job.installDate) : "", job?.designerName ? `Designer ${job.designerName}` : ""]
-              .filter(Boolean)
-              .join(" · ") || memberLine || "Project chat"}
-          </p>
+          {memberLine ? <p>{memberLine}</p> : null}
         </div>
-        <button type="button" className="company-text company-details" onClick={() => setPane("job")}>
-          Details
+        <button type="button" className="company-icon-button" onClick={() => setCallRequest("audio")} aria-label="Voice call">
+          <Phone size={18} />
+        </button>
+        <button type="button" className="company-icon-button" onClick={() => setCallRequest("video")} aria-label="Video call">
+          <Video size={18} />
+        </button>
+        <button type="button" className="company-icon-button company-details" onClick={() => setPane("job")} aria-label="Project details">
+          <Info size={18} />
         </button>
       </header>
-      {job ? (
-        <section className="company-context">
-          <strong>Queue {job.jobRef}</strong>
-          <span>{job.customerName}</span>
-          <span>Designer {job.designerName || "—"}</span>
-          <span>Install {formatDay(job.installDate)}</span>
-          <span>{job.stage}</span>
-          {job.notes ? <p>{job.notes}</p> : null}
-        </section>
+      {selectedId ? (
+        <ProjectCall groupId={selectedId} meId={session.user.id} request={callRequest} onRequestHandled={() => setCallRequest(null)} />
       ) : null}
       <MessageList
         messages={shownMessages}
         bottomRef={bottomRef}
-        canPin={isAdmin}
+        onOpen={setViewer}
         onReply={setReplyTo}
         onPin={(messageId) => {
           if (!selectedId) return;
@@ -409,29 +331,16 @@ export function InboxPage() {
             </button>
           </p>
         ) : null}
-        {workOrder ? (
-          <label className="company-prepare">
-            Prepare, one item per line
-            <textarea value={prepare} onChange={(event) => setPrepare(event.target.value)} rows={3} />
-          </label>
-        ) : null}
-        <div className="company-composer__tools">
-          <button type="button" onClick={() => pickFile("image")}>
-            <Image size={16} /> Photo
-          </button>
-          <button type="button" onClick={() => pickFile("video")}>
-            <Video size={16} /> Video
-          </button>
-          <button type="button" onClick={() => pickFile("file")}>
-            <FileText size={16} /> File
-          </button>
-          {isAdmin ? (
-            <button type="button" className={workOrder ? "company-tool--on" : ""} onClick={() => setWorkOrder((open) => !open)}>
-              Work order
-            </button>
-          ) : null}
-        </div>
         <div className="company-composer__bar">
+          <button type="button" className="company-icon-button" onClick={() => pickFile("image")} aria-label="Photo">
+            <Image size={18} />
+          </button>
+          <button type="button" className="company-icon-button" onClick={() => pickFile("video")} aria-label="Video">
+            <Video size={18} />
+          </button>
+          <button type="button" className="company-icon-button" onClick={() => pickFile("file")} aria-label="File">
+            <FileText size={18} />
+          </button>
           <label className="company-sr" htmlFor="company-message">
             Message
           </label>
@@ -439,7 +348,7 @@ export function InboxPage() {
             id="company-message"
             rows={1}
             maxLength={4000}
-            placeholder={workOrder ? "Important notes for this job" : "Message this project"}
+            placeholder="Message"
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
@@ -449,7 +358,7 @@ export function InboxPage() {
               }
             }}
           />
-          <button type="submit" className="company-send" disabled={sending || (!text.trim() && files.length === 0 && !prepare.trim())} aria-label="Send">
+          <button type="submit" className="company-send" disabled={sending || (!text.trim() && files.length === 0)} aria-label="Send">
             <Send size={16} />
           </button>
         </div>
@@ -473,15 +382,13 @@ export function InboxPage() {
   ) : (
     <div className="company-page">
       <header className="company-page__head">
-        <h1>Inbox</h1>
+        <h1>Chats</h1>
       </header>
-      <p>Select a conversation. Installers only see their own groups.</p>
+      <p>Choose a project.</p>
     </div>
   );
 
   const sheetMatch = findSheetJob(sheet.jobs, job?.jobRef);
-  const shownStage = sheetMatch?.stage ?? job?.stage ?? null;
-  const activeStage = stageIndex(shownStage);
   const jobPanel = openThread ? (
     <div className="company-job__inner" data-testid="job-panel">
       <header className="company-job__head">
@@ -490,7 +397,7 @@ export function InboxPage() {
         </button>
         <div>
           <h2>{sheetMatch ? jobTitle(sheetMatch.jobRef) : job ? jobTitle(job.jobRef) : openThread.group.name}</h2>
-          {shownStage ? <span className="company-pill">{shownStage}</span> : null}
+          {job?.stage || sheetMatch?.stage ? <span className="company-pill">{sheetMatch?.stage ?? job?.stage}</span> : null}
         </div>
       </header>
       <div className="company-job__body">
@@ -524,19 +431,7 @@ export function InboxPage() {
         ) : (
           <p className="company-empty">This chat is not linked to a sheet row.</p>
         )}
-        <h3>Stage</h3>
-        <ol className="company-pipeline">
-          {PIPELINE.map((stage, index) => (
-            <li key={stage} className={index <= activeStage ? "company-pipeline__step company-pipeline__step--on" : "company-pipeline__step"}>
-              <span />
-              {stage}
-            </li>
-          ))}
-        </ol>
-        <a className="company-outline" href="/company/jobs">
-          Open the sheet
-        </a>
-        {sheet.error ? <p className="company-error">{sheet.error}</p> : null}
+        {job?.notes ? <p className="company-job__note">{job.notes}</p> : null}
       </div>
     </div>
   ) : (
@@ -544,8 +439,9 @@ export function InboxPage() {
   );
 
   return (
-    <CompanyShell pane={pane} list={list} job={jobPanel}>
+    <CompanyShell pane={pane} list={list} job={pane === "job" ? jobPanel : undefined}>
       {conversation}
+      <MediaViewer item={viewer} onClose={() => setViewer(null)} />
     </CompanyShell>
   );
 }
@@ -553,16 +449,17 @@ export function InboxPage() {
 function MessageList({
   messages,
   bottomRef,
-  canPin,
+  onOpen,
   onReply,
   onPin,
 }: {
   messages: ChatMessage[];
   bottomRef: RefObject<HTMLDivElement | null>;
-  canPin: boolean;
+  onOpen: (item: ViewableMedia) => void;
   onReply: (message: ChatMessage) => void;
   onPin: (messageId: number) => void;
 }) {
+  const [openId, setOpenId] = useState<number | null>(null);
   const pinned = messages.filter((message) => message.pinned);
   let previousDay = "";
   return (
@@ -570,9 +467,9 @@ function MessageList({
       {pinned.length > 0 ? (
         <div className="company-pins">
           {pinned.map((message) => (
-            <p key={message.id}>
-              <Pin size={12} /> {message.body || "Pinned attachment"}
-            </p>
+            <button key={message.id} type="button" onClick={() => document.getElementById(`message-${message.id}`)?.scrollIntoView({ block: "center" })}>
+              <Pin size={12} /> {message.body || "Pinned photo"}
+            </button>
           ))}
         </div>
       ) : null}
@@ -584,9 +481,15 @@ function MessageList({
         const videos = (message.attachments ?? []).filter((item) => item.kind === "video");
         const files = (message.attachments ?? []).filter((item) => item.kind === "file");
         return (
-          <div key={message.id}>
+          <div key={message.id} id={`message-${message.id}`}>
             {showDay ? <p className="company-day">{label}</p> : null}
-            <article className={message.mine ? "company-msg company-msg--mine" : "company-msg"}>
+            <article
+              className={[
+                message.mine ? "company-msg company-msg--mine" : "company-msg",
+                openId === message.id ? "company-msg--open" : "",
+              ].filter(Boolean).join(" ")}
+              onClick={() => setOpenId((current) => (current === message.id ? null : message.id))}
+            >
               <span className="company-avatar company-avatar--sm">{message.sender.displayName.slice(0, 1)}</span>
               <div className={message.kind === "work_order" ? "company-msg__card company-msg__card--order" : "company-msg__card"}>
                 <p className="company-msg__who">
@@ -610,12 +513,31 @@ function MessageList({
                 {images.length > 0 ? (
                   <div className="company-gallery">
                     {images.map((item) => (
-                      <img key={item.id} src={item.url} alt={item.fileName} />
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpen({ url: item.url, name: item.fileName, kind: "image" });
+                        }}
+                      >
+                        <img src={item.url} alt={item.fileName} />
+                      </button>
                     ))}
                   </div>
                 ) : null}
                 {videos.map((item) => (
-                  <video key={item.id} src={item.url} controls preload="metadata" />
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="company-video-open"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpen({ url: item.url, name: item.fileName, kind: "video" });
+                    }}
+                  >
+                    <video src={item.url} muted preload="metadata" />
+                  </button>
                 ))}
                 {files.map((item) => (
                   <a key={item.id} className="company-file-link" href={item.url} target="_blank" rel="noreferrer">
@@ -623,14 +545,24 @@ function MessageList({
                   </a>
                 ))}
                 <p className="company-msg__actions">
-                  <button type="button" onClick={() => onReply(message)}>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onReply(message);
+                    }}
+                  >
                     Reply
                   </button>
-                  {canPin ? (
-                    <button type="button" onClick={() => onPin(message.id)}>
-                      {message.pinned ? "Unpin" : "Pin"}
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onPin(message.id);
+                    }}
+                  >
+                    {message.pinned ? "Unpin" : "Pin"}
+                  </button>
                 </p>
               </div>
             </article>

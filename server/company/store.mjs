@@ -181,8 +181,28 @@ export function createCompanyApi() {
       created_at TEXT NOT NULL
     ) STRICT;
 
+    CREATE TABLE IF NOT EXISTS calls (
+      id INTEGER PRIMARY KEY,
+      group_id INTEGER NOT NULL REFERENCES chat_groups(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      kind TEXT NOT NULL CHECK (kind IN ('audio', 'video')),
+      status TEXT NOT NULL CHECK (status IN ('ringing', 'active', 'ended')),
+      created_at TEXT NOT NULL,
+      ended_at TEXT
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS call_signals (
+      id INTEGER PRIMARY KEY,
+      call_id INTEGER NOT NULL REFERENCES calls(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      kind TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    ) STRICT;
+
     CREATE INDEX IF NOT EXISTS messages_group ON messages (group_id, id);
     CREATE INDEX IF NOT EXISTS attachments_message ON message_attachments (message_id);
+    CREATE INDEX IF NOT EXISTS call_signals_call ON call_signals (call_id, id);
   `);
 
   const messageColumns = db.prepare("PRAGMA table_info(messages)").all().map((column) => column.name);
@@ -266,12 +286,8 @@ export function createCompanyApi() {
   function assertGroup(user, groupId) {
     const group = loadGroup(groupId);
     if (!group) throw httpError(404, "That group does not exist.");
-    if (hasRole(user, "admin")) return group;
-    const member = db
-      .prepare("SELECT 1 AS ok FROM chat_group_members WHERE group_id = ? AND user_id = ?")
-      .get(groupId, user.id);
-    if (!member) throw httpError(403, "You are not in this group.");
-    return group;
+    if (canSeeGroup(user, group)) return group;
+    throw httpError(403, "You are not in this group.");
   }
 
   function membersOf(groupId) {
@@ -364,8 +380,21 @@ export function createCompanyApi() {
       .get(groupId, userId, userId).n;
   }
 
+  function canSeeGroup(user, group) {
+    if (hasRole(user, "owner")) return true;
+    const member = db
+      .prepare("SELECT 1 AS ok FROM chat_group_members WHERE group_id = ? AND user_id = ?")
+      .get(group.id, user.id);
+    if (member) return true;
+    return (
+      hasRole(user, "designer") &&
+      group.designer_name &&
+      group.designer_name.toLowerCase() === user.displayName.toLowerCase()
+    );
+  }
+
   function visibleGroupRows(user) {
-    if (hasRole(user, "admin")) {
+    if (hasRole(user, "owner")) {
       return db
         .prepare(
           `SELECT g.id, g.name, g.kind, g.job_id, j.job_ref, j.customer_name, j.designer_name, j.stage, j.install_date, j.notes
@@ -373,6 +402,18 @@ export function createCompanyApi() {
            LEFT JOIN jobs j ON j.id = g.job_id`,
         )
         .all();
+    }
+    if (hasRole(user, "designer")) {
+      return db
+        .prepare(
+          `SELECT g.id, g.name, g.kind, g.job_id, j.job_ref, j.customer_name, j.designer_name, j.stage, j.install_date, j.notes
+           FROM chat_groups g
+           LEFT JOIN jobs j ON j.id = g.job_id
+           WHERE EXISTS (
+             SELECT 1 FROM chat_group_members m WHERE m.group_id = g.id AND m.user_id = ?
+           ) OR lower(ifnull(j.designer_name, '')) = lower(?)`,
+        )
+        .all(user.id, user.displayName);
     }
     return db
       .prepare(
@@ -489,7 +530,7 @@ export function createCompanyApi() {
 
     db.exec("BEGIN");
     try {
-      for (const name of ["admin", "installer", "designer", "purchasing", "cnc"]) {
+      for (const name of ["owner", "admin", "installer", "designer", "purchasing", "cnc"]) {
         insertRole.run(name);
       }
       const roleId = (name) => db.prepare("SELECT id FROM roles WHERE name = ?").get(name).id;
@@ -569,8 +610,54 @@ export function createCompanyApi() {
   }
 
   seed();
+  ensurePortalAccounts();
+
+  function ensureRole(name) {
+    db.prepare("INSERT OR IGNORE INTO roles (name) VALUES (?)").run(name);
+  }
+
+  function ensureUser(username, password, displayName, roleName) {
+    ensureRole(roleName);
+    let row = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
+    if (!row) {
+      const id = Number(
+        db.prepare(
+          "INSERT INTO users (username, password_hash, display_name, created_at) VALUES (?, ?, ?, ?)",
+        ).run(username, hashPassword(password), displayName, iso()).lastInsertRowid,
+      );
+      row = { id };
+    }
+    const role = db.prepare("SELECT id FROM roles WHERE name = ?").get(roleName);
+    db.prepare("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)").run(row.id, role.id);
+    return row.id;
+  }
+
+  function ensurePortalAccounts() {
+    const ownerId = ensureUser("owner", process.env.COMPANY_OWNER_PASSWORD || "kiddai-owner", "Owner", "owner");
+    const hanId = ensureUser("han", process.env.COMPANY_DESIGNER_PASSWORD || "kiddai-han", "Han", "designer");
+    const admin = db.prepare("SELECT id FROM users WHERE username = ?").get("admin");
+    if (admin) db.prepare("DELETE FROM chat_group_members WHERE user_id = ?").run(admin.id);
+    const group = db.prepare("SELECT id FROM chat_groups ORDER BY id LIMIT 1").get();
+    if (group) {
+      const addMember = db.prepare("INSERT OR IGNORE INTO chat_group_members (group_id, user_id) VALUES (?, ?)");
+      addMember.run(group.id, ownerId);
+      addMember.run(group.id, hanId);
+    }
+  }
   const cutoff = iso(-14 * 24 * 60 * 60 * 1000);
   db.prepare("DELETE FROM sessions WHERE created_at < ?").run(cutoff);
+
+  function callPayload(row) {
+    const starter = db.prepare("SELECT id, display_name FROM users WHERE id = ?").get(row.user_id);
+    return {
+      id: row.id,
+      groupId: row.group_id,
+      kind: row.kind,
+      status: row.status,
+      startedBy: { id: starter?.id ?? row.user_id, displayName: starter?.display_name ?? "Someone" },
+      createdAt: row.created_at,
+    };
+  }
 
   return {
     login(username, password) {
@@ -663,8 +750,8 @@ export function createCompanyApi() {
         .map((line) => line.trim())
         .filter(Boolean)
         .slice(0, 12);
-      if (kind === "work_order" && !hasRole(user, "admin")) {
-        throw httpError(403, "Only an admin can post a work order.");
+      if (kind === "work_order" && !hasRole(user, "owner")) {
+        throw httpError(403, "Only the owner can post a work order.");
       }
       if (!body && files.length === 0 && prepare.length === 0) {
         throw httpError(400, "Write a message or attach a photo, video, or file.");
@@ -730,12 +817,80 @@ export function createCompanyApi() {
 
     pinMessage(user, groupId, messageId) {
       assertGroup(user, groupId);
-      if (!hasRole(user, "admin")) throw httpError(403, "Only an admin can pin a message.");
       const row = db.prepare("SELECT pinned FROM messages WHERE id = ? AND group_id = ?").get(messageId, groupId);
       if (!row) throw httpError(404, "That message does not exist.");
       db.prepare("UPDATE messages SET pinned = ? WHERE id = ?").run(row.pinned ? 0 : 1, messageId);
       audit(user.id, "pin_message", `message:${messageId}`);
       return this.thread(user, groupId);
+    },
+
+    startCall(user, groupId, kind) {
+      assertGroup(user, groupId);
+      if (kind !== "audio" && kind !== "video") throw httpError(400, "Choose a voice or video call.");
+      const existing = db
+        .prepare("SELECT * FROM calls WHERE group_id = ? AND status != 'ended' ORDER BY id DESC LIMIT 1")
+        .get(groupId);
+      if (existing) return callPayload(existing);
+      const id = Number(
+        db.prepare(
+          "INSERT INTO calls (group_id, user_id, kind, status, created_at) VALUES (?, ?, ?, 'ringing', ?)",
+        ).run(groupId, user.id, kind, iso()).lastInsertRowid,
+      );
+      return callPayload(db.prepare("SELECT * FROM calls WHERE id = ?").get(id));
+    },
+
+    endCall(user, groupId, callId) {
+      assertGroup(user, groupId);
+      const row = db.prepare("SELECT id FROM calls WHERE id = ? AND group_id = ?").get(callId, groupId);
+      if (!row) throw httpError(404, "That call does not exist.");
+      db.prepare("UPDATE calls SET status = 'ended', ended_at = ? WHERE id = ?").run(iso(), callId);
+      return { ok: true };
+    },
+
+    activeCall(user, groupId) {
+      assertGroup(user, groupId);
+      const row = db
+        .prepare("SELECT * FROM calls WHERE group_id = ? AND status != 'ended' ORDER BY id DESC LIMIT 1")
+        .get(groupId);
+      return { call: row ? callPayload(row) : null };
+    },
+
+    postSignal(user, groupId, callId, input) {
+      assertGroup(user, groupId);
+      const call = db.prepare("SELECT * FROM calls WHERE id = ? AND group_id = ?").get(callId, groupId);
+      if (!call || call.status === "ended") throw httpError(400, "That call has ended.");
+      const kind = String(input.kind || "");
+      if (!["offer", "answer", "ice", "hangup"].includes(kind)) throw httpError(400, "That call update is not valid.");
+      const payload = JSON.stringify(input.payload ?? {});
+      if (payload.length > 20000) throw httpError(400, "That call update is too large.");
+      if (call.status === "ringing") db.prepare("UPDATE calls SET status = 'active' WHERE id = ?").run(callId);
+      const id = Number(
+        db.prepare(
+          "INSERT INTO call_signals (call_id, user_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)",
+        ).run(callId, user.id, kind, payload, iso()).lastInsertRowid,
+      );
+      return { id };
+    },
+
+    callSignals(user, groupId, callId, after) {
+      assertGroup(user, groupId);
+      const call = db.prepare("SELECT id, status FROM calls WHERE id = ? AND group_id = ?").get(callId, groupId);
+      if (!call) throw httpError(404, "That call does not exist.");
+      const rows = db
+        .prepare(
+          "SELECT id, user_id, kind, payload, created_at FROM call_signals WHERE call_id = ? AND id > ? ORDER BY id LIMIT 80",
+        )
+        .all(callId, Number(after) || 0);
+      return {
+        status: call.status,
+        signals: rows.map((row) => ({
+          id: row.id,
+          userId: row.user_id,
+          kind: row.kind,
+          payload: JSON.parse(row.payload),
+          createdAt: row.created_at,
+        })),
+      };
     },
 
     mediaFor(user, storedName) {

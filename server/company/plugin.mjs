@@ -225,6 +225,51 @@ async function handle(api, req, res, url) {
       sendJson(res, 200, api.pinMessage(user, Number(pinMatch[1]), Number(pinMatch[2])));
       return;
     }
+
+    if (req.method === "GET" && pathname === `/api/company/groups/${groupId}/calls/active`) {
+      sendJson(res, 200, api.activeCall(user, groupId));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === `/api/company/groups/${groupId}/calls`) {
+      const raw = await readBody(req, JSON_LIMIT);
+      let payload = {};
+      try {
+        payload = raw.length ? JSON.parse(raw.toString("utf8")) : {};
+      } catch {
+        const error = new Error("That call could not be read.");
+        error.status = 400;
+        throw error;
+      }
+      sendJson(res, 201, api.startCall(user, groupId, payload.kind));
+      return;
+    }
+
+    const callEnd = /^\/api\/company\/groups\/(\d+)\/calls\/(\d+)\/end$/.exec(pathname);
+    if (req.method === "POST" && callEnd) {
+      sendJson(res, 200, api.endCall(user, Number(callEnd[1]), Number(callEnd[2])));
+      return;
+    }
+
+    const callSignals = /^\/api\/company\/groups\/(\d+)\/calls\/(\d+)\/signals$/.exec(pathname);
+    if (callSignals && req.method === "GET") {
+      const after = url.searchParams.get("after") || "0";
+      sendJson(res, 200, api.callSignals(user, Number(callSignals[1]), Number(callSignals[2]), after));
+      return;
+    }
+    if (callSignals && req.method === "POST") {
+      const raw = await readBody(req, JSON_LIMIT);
+      let payload = {};
+      try {
+        payload = raw.length ? JSON.parse(raw.toString("utf8")) : {};
+      } catch {
+        const error = new Error("That call update could not be read.");
+        error.status = 400;
+        throw error;
+      }
+      sendJson(res, 201, api.postSignal(user, Number(callSignals[1]), Number(callSignals[2]), payload));
+      return;
+    }
   }
 
   sendJson(res, 404, { error: "Not found" });

@@ -68,3 +68,48 @@ export function sendMessage(
 export function pinMessage(groupId: number, messageId: number) {
   return request<GroupThread>(`/api/company/groups/${groupId}/messages/${messageId}/pin`, { method: "POST" });
 }
+
+export type ProjectCall = {
+  id: number;
+  groupId: number;
+  kind: "audio" | "video";
+  status: "ringing" | "active" | "ended";
+  startedBy: { id: number; displayName: string };
+  createdAt: string;
+};
+
+export type CallSignal = {
+  id: number;
+  userId: number;
+  kind: "offer" | "answer" | "ice" | "hangup";
+  payload: { to?: number; sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
+  createdAt: string;
+};
+
+export function activeCall(groupId: number) {
+  return request<{ call: ProjectCall | null }>(`/api/company/groups/${groupId}/calls/active`);
+}
+
+export function startCall(groupId: number, kind: "audio" | "video") {
+  return request<ProjectCall>(`/api/company/groups/${groupId}/calls`, {
+    method: "POST",
+    body: JSON.stringify({ kind }),
+  });
+}
+
+export function endCall(groupId: number, callId: number) {
+  return request<{ ok: boolean }>(`/api/company/groups/${groupId}/calls/${callId}/end`, { method: "POST" });
+}
+
+export function postCallSignal(groupId: number, callId: number, kind: CallSignal["kind"], payload: CallSignal["payload"]) {
+  return request<{ id: number }>(`/api/company/groups/${groupId}/calls/${callId}/signals`, {
+    method: "POST",
+    body: JSON.stringify({ kind, payload }),
+  });
+}
+
+export function fetchCallSignals(groupId: number, callId: number, after: number) {
+  return request<{ status: string; signals: CallSignal[] }>(
+    `/api/company/groups/${groupId}/calls/${callId}/signals?after=${after}`,
+  );
+}
