@@ -56,6 +56,15 @@ export function notificationMatchesCustomer(senderName: string, customerName: st
  * Sheet convention: `line@` → LINE only; no marker → Facebook only.
  * Name matching still strips `line@` so Messenger/LINE display names can match the base name.
  */
+export function notificationExactlyMatchesCustomer(senderName: string, customerName: string) {
+  const left = normalizeName(senderName);
+  const right = normalizeName(customerName);
+  if (!left || !right || left === "facebook user" || left === "line user") {
+    return false;
+  }
+  return left === right;
+}
+
 export function notificationAppliesToCustomer(
   senderName: string,
   customerName: string,

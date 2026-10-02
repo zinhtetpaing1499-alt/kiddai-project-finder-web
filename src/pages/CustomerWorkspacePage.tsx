@@ -20,7 +20,8 @@ import {
   fetchFacebookNotifications,
   markFacebookNotificationsRead,
   notificationAppliesToCustomer,
-  stripLineMarker,
+  notificationExactlyMatchesCustomer,
+  customerHasLineMarker,
   type FacebookNotification,
 } from "../services/facebookNotifications";
 import {
@@ -36,10 +37,13 @@ import {
   fetchWorkflowWorksheetRows,
   fetchWorkflowWorksheetsRows,
   findQcDestinationFolders,
+  copyStillActiveContentsIntoDepositFolder,
+  inspectDepositQueueFolders,
+  type DepositQueueFolderState,
   findSellingCustomerFolders,
   listSellingCustomerFolderNames,
   moveSellingCustomerFolder,
-  normalizeDriveName,
+  sellingFolderNameMatchesCustomer,
   importCsvIntoGoogleSheet,
   isRevisionStyleProjectFolder,
   listQcSheetsInFolder,
@@ -450,7 +454,26 @@ function findSellingStageLayout(rows: WorkflowCell[][]) {
         : 6,
     designerColumn: findColumn(["designer", "ช่างแบบ", "ช่าง"]) >= 0 ? findColumn(["designer", "ช่างแบบ", "ช่าง"]) : 7,
     freezeColumn: findColumn(["freez"]) >= 0 ? findColumn(["freez"]) : 8,
+    depositQueueColumn: findColumn(["มัดจำ"]),
   };
+}
+
+function readDepositQueueNumber(rows: WorkflowCell[][], projectNumber: string, ownerName: string) {
+  const layout = findSellingStageLayout(rows);
+  if (layout.depositQueueColumn < 0) {
+    return "";
+  }
+  for (let rowIndex = layout.headerRow + 1; rowIndex < rows.length; rowIndex += 1) {
+    if (getCellText(rows, rowIndex, layout.projectColumn) !== projectNumber.trim()) {
+      continue;
+    }
+    const owner = getCellText(rows, rowIndex, layout.designerColumn);
+    if (owner && ownerName && !matchDepositStageOwner(owner, ownerName)) {
+      continue;
+    }
+    return getCellText(rows, rowIndex, layout.depositQueueColumn).match(/\d{4,}/u)?.[0] ?? "";
+  }
+  return "";
 }
 
 function locateSellingFreezeCell(rows: WorkflowCell[][], projectNumber: string, ownerName: string) {
@@ -504,11 +527,8 @@ function parseSellingFreeze(rows: WorkflowCell[][]) {
   return records;
 }
 
-function folderNameMatchesCustomer(folderName: string, customerName: string) {
-  const folder = normalizeDriveName(folderName);
-  const customer = normalizeDriveName(customerName);
-  const withoutLineMarker = normalizeDriveName(stripLineMarker(customerName));
-  return folder.length > 0 && (folder === customer || folder === withoutLineMarker);
+function folderNameMatchesCustomer(folderName: string, customerName: string, projectNumber = "") {
+  return sellingFolderNameMatchesCustomer(folderName, customerName, projectNumber);
 }
 
 function statusLabel(value: string | null | undefined) {
@@ -669,6 +689,42 @@ function tabNotiBadge(count: number) {
   );
 }
 
+const FOLDER_PLACES_CACHE_KEY = "kiddai.web.sellingFolderPlaces";
+
+function readFolderPlaceCache(designerFolderName: string) {
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(FOLDER_PLACES_CACHE_KEY) ?? "") as Record<
+      string,
+      { active?: unknown; freeze?: unknown }
+    >;
+    const entry = parsed[designerFolderName];
+    const active = Array.isArray(entry?.active) ? entry.active.filter((name) => typeof name === "string") : null;
+    const freeze = Array.isArray(entry?.freeze) ? entry.freeze.filter((name) => typeof name === "string") : null;
+    if (!active || !freeze) {
+      return null;
+    }
+    return { active, freeze };
+  } catch {
+    return null;
+  }
+}
+
+function writeFolderPlaceCache(
+  designerFolderName: string,
+  places: { active: string[]; freeze: string[] },
+) {
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(FOLDER_PLACES_CACHE_KEY) ?? "{}") as Record<
+      string,
+      { active: string[]; freeze: string[] }
+    >;
+    parsed[designerFolderName] = places;
+    window.sessionStorage.setItem(FOLDER_PLACES_CACHE_KEY, JSON.stringify(parsed));
+  } catch {
+    // The red icon still updates from the live Drive list.
+  }
+}
+
 export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const { connection, refreshGoogleConnection } = useGoogleConnection();
   const [designer, setDesigner] = useState<DesignerName>("Tod");
@@ -678,6 +734,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const [freezeReady, setFreezeReady] = useState(false);
   const [freezeWarning, setFreezeWarning] = useState("");
   const [folderPlaces, setFolderPlaces] = useState<{ active: string[]; freeze: string[] } | null>(null);
+  const [depositFolderState, setDepositFolderState] = useState<Record<string, DepositQueueFolderState> | null>(null);
+  const [depositFolderRevision, setDepositFolderRevision] = useState(0);
   const [folderPlaceRevision, setFolderPlaceRevision] = useState(0);
   const [records, setRecords] = useState<CustomerRecord[]>([]);
   const [finishedAll, setFinishedAll] = useState<CustomerRecord[]>([]);
@@ -690,6 +748,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const [reminderRevision, setReminderRevision] = useState(0);
   const [facebookNotifications, setFacebookNotifications] = useState<FacebookNotification[]>([]);
   const [lineNotifications, setLineNotifications] = useState<LineNotification[]>([]);
+  const [messagingReady, setMessagingReady] = useState(false);
   const [pendingLocalFolderChoice, setPendingLocalFolderChoice] =
     useState<PendingLocalFolderChoice | null>(null);
   const [pendingDriveFolderChoice, setPendingDriveFolderChoice] =
@@ -699,6 +758,13 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     useState<PendingCreateConfirmation | null>(null);
   const [pendingQcAction, setPendingQcAction] = useState<PendingQcAction | null>(null);
   const [pendingFolderOpen, setPendingFolderOpen] = useState<PendingFolderOpen | null>(null);
+  const [pendingReturnToSelling, setPendingReturnToSelling] = useState<CustomerRecord | null>(null);
+  const [pendingDepositMove, setPendingDepositMove] = useState<{
+    record: CustomerRecord;
+    queueNumber: string;
+  } | null>(null);
+  const [depositQueueReminder, setDepositQueueReminder] = useState<CustomerRecord | null>(null);
+  const [missingFolderReminder, setMissingFolderReminder] = useState<CustomerRecord | null>(null);
   const [qcResultNotice, setQcResultNotice] = useState<QcResultNotice | null>(null);
   const [sheetCreateResult, setSheetCreateResult] = useState<SheetCreateResultNotice | null>(null);
   const [queueFolderResult, setQueueFolderResult] = useState<QueueFolderResultNotice | null>(null);
@@ -711,8 +777,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   const depositStageSnapshotRef = useRef<DepositStageSnapshot | null>(null);
   const sellingStageRef = useRef<{ worksheetName: string; rows: WorkflowCell[][] } | null>(null);
   const sellingTapRef = useRef(new Map<string, { count: number; at: number }>());
+  const sellingTapTimerRef = useRef(new Map<string, number>());
   const freezingProjectsRef = useRef(new Set<string>());
+  const depositingProjectsRef = useRef(new Set<string>());
   const returningProjectsRef = useRef(new Set<string>());
+  const freezeNotiBaselineRef = useRef<Set<string> | null>(null);
   const depositStageLoadRef = useRef<Promise<DepositStageSnapshot> | null>(null);
   const pendingCellValuesRef = useRef(new Map<string, string>());
   const cellWriteQueuesRef = useRef(new Map<string, Promise<void>>());
@@ -997,6 +1066,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       setFolderPlaces(null);
       return;
     }
+    const designerFolderName = SELLING_DESIGNER_FOLDER_NAMES[designer];
+    const cachedPlaces = readFolderPlaceCache(designerFolderName);
+    setFolderPlaces(cachedPlaces);
     let cancelled = false;
 
     async function loadFolderPlaces() {
@@ -1013,13 +1085,14 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         }
         const places = await listSellingCustomerFolderNames(
           kiddai2.folderId,
-          SELLING_DESIGNER_FOLDER_NAMES[designer],
+          designerFolderName,
         );
         if (!cancelled) {
           setFolderPlaces(places);
+          writeFolderPlaceCache(designerFolderName, places);
         }
       } catch {
-        if (!cancelled) {
+        if (!cancelled && !cachedPlaces) {
           setFolderPlaces(null);
         }
       }
@@ -1030,6 +1103,42 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       cancelled = true;
     };
   }, [connection.status, designer, folderPlaceRevision, mode]);
+
+  useEffect(() => {
+    if (mode !== "deposit" || depositView !== "active") {
+      setDepositFolderState(null);
+      return;
+    }
+    const customers = records
+      .filter((record) => record.projectNumber.trim() && record.customerName.trim())
+      .map((record) => ({
+        queueNumber: record.projectNumber.trim(),
+        customerName: record.customerName.trim(),
+      }));
+    if (connection.status !== "Connected" || customers.length === 0) {
+      setDepositFolderState(customers.length === 0 ? {} : null);
+      return;
+    }
+    let cancelled = false;
+
+    async function loadDepositFolders() {
+      try {
+        const next = await inspectDepositQueueFolders(customers);
+        if (!cancelled) {
+          setDepositFolderState(next);
+        }
+      } catch {
+        if (!cancelled) {
+          setDepositFolderState(null);
+        }
+      }
+    }
+
+    void loadDepositFolders();
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.status, depositFolderRevision, depositView, mode, records]);
 
   const loadFinishedDepositStage = useCallback(
     async (background: boolean) => {
@@ -1233,6 +1342,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         if (!cancelled) {
           setFacebookNotifications(facebookResult.notifications);
           setLineNotifications(lineResult.notifications);
+          setMessagingReady(true);
         }
       } finally {
         messagingRefreshInFlightRef.current = false;
@@ -1344,114 +1454,34 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }, [designer, freezeAll, messagingNotifications, mode, reminderRevision]);
 
   useEffect(() => {
-    if (mode !== "selling" || !freezeReady || messagingNotifications.length === 0) {
+    if (mode !== "selling" || !freezeReady || !messagingReady) {
       return;
     }
-    const spreadsheetId = currentWorkflowSpreadsheetId();
-    const stage = sellingStageRef.current;
-    if (!spreadsheetId || !stage) {
+    if (freezeNotiBaselineRef.current === null) {
+      freezeNotiBaselineRef.current = new Set(messagingNotifications.map((item) => item.id));
       return;
     }
-    const messaging = freezeAll.filter(
-      (record) => notificationsForCustomer(messagingNotifications, record.customerName).length > 0,
+    const freshNotifications = messagingNotifications.filter(
+      (item) => !freezeNotiBaselineRef.current?.has(item.id),
+    );
+    for (const item of messagingNotifications) {
+      freezeNotiBaselineRef.current.add(item.id);
+    }
+    if (freshNotifications.length === 0) {
+      return;
+    }
+    const messaging = freezeAll.filter((record) =>
+      freshNotifications.some(
+        (item) =>
+          item.source === (customerHasLineMarker(record.customerName) ? "line" : "facebook") &&
+          notificationExactlyMatchesCustomer(item.senderName, record.customerName),
+      ),
     );
     if (messaging.length === 0) {
       return;
     }
-    let cancelled = false;
-
-    async function returnMessagingCustomers() {
-      for (const record of messaging) {
-        const projectKey = `${record.owner}:${record.projectNumber}`;
-        if (returningProjectsRef.current.has(projectKey) || freezingProjectsRef.current.has(record.projectNumber)) {
-          continue;
-        }
-        const ownerName = DESIGNERS.find((name) => matchDepositStageOwner(record.owner, name));
-        const located = locateSellingFreezeCell(stage!.rows, record.projectNumber, record.owner);
-        if (!ownerName || !located) {
-          continue;
-        }
-        returningProjectsRef.current.add(projectKey);
-        try {
-          if (connection.status !== "Connected") {
-            const restored = await refreshGoogleConnection();
-            if (restored.errorMessage || restored.connection?.status !== "Connected") {
-              throw new Error(restored.errorMessage || "Connect Google in Settings first.");
-            }
-          }
-          if (cancelled) {
-            return;
-          }
-          await updateWorkflowWorksheetCell(
-            spreadsheetId,
-            stage!.worksheetName,
-            `${columnLetter(located.freezeColumn)}${located.rowIndex + 1}`,
-            "",
-          );
-          const targetCell = stage!.rows[located.rowIndex]?.[located.freezeColumn];
-          if (targetCell) {
-            targetCell.text = "";
-          }
-          setFreezeAll((current) =>
-            current.filter(
-              (item) =>
-                item.projectNumber !== record.projectNumber || !matchDepositStageOwner(item.owner, record.owner),
-            ),
-          );
-          const restoredRecord: CustomerRecord = {
-            ...record,
-            id: `selling-active-${record.projectNumber}`,
-            owner: "",
-          };
-          const mergeRecord = (current: CustomerRecord[]) =>
-            current.some((item) => item.projectNumber === record.projectNumber) ? current : [...current, restoredRecord];
-          if (ownerName === designer) {
-            setRecords((current) => {
-              const next = mergeRecord(current);
-              writeCache({
-                version: CUSTOMER_CACHE_VERSION,
-                spreadsheetId,
-                mode: "selling",
-                designer: ownerName,
-                fetchedAt: new Date().toISOString(),
-                records: next,
-              });
-              return next;
-            });
-          } else {
-            const saved = readCache("selling", ownerName);
-            writeCache({
-              version: CUSTOMER_CACHE_VERSION,
-              spreadsheetId,
-              mode: "selling",
-              designer: ownerName,
-              fetchedAt: saved?.fetchedAt || new Date().toISOString(),
-              records: mergeRecord(saved?.records ?? []),
-            });
-            setDesignerCacheEpoch((value) => value + 1);
-          }
-          try {
-            await relocateCustomerFolder(record.customerName, ownerName, "active");
-          } catch (folderError) {
-            if (!cancelled) {
-              setActionError(getErrorMessage(folderError));
-            }
-          }
-        } catch (error) {
-          if (!cancelled) {
-            setActionError(`Could not move ${record.customerName} back to Selling: ${getErrorMessage(error)}`);
-          }
-        } finally {
-          returningProjectsRef.current.delete(projectKey);
-        }
-      }
-    }
-
-    void returnMessagingCustomers();
-    return () => {
-      cancelled = true;
-    };
-  }, [connection.status, designer, freezeAll, freezeReady, messagingNotifications, mode, refreshGoogleConnection]);
+    setPendingReturnToSelling((current) => current ?? messaging[0]);
+  }, [freezeAll, freezeReady, messagingNotifications, messagingReady, mode]);
 
   async function resolveTemplateSpreadsheetIds() {
     const spreadsheetId = window.localStorage.getItem(WORKFLOW_GOOGLE_SHEET_ID_KEY)?.trim() ?? "";
@@ -1590,7 +1620,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     window.localStorage.setItem(KIDDAI2_FOLDER_ID_KEY, kiddai2.folderId);
 
     const designerFolderName = SELLING_DESIGNER_FOLDER_NAMES[designer];
-    const key = `${kiddai2.folderId}::${designerFolderName}::${record.customerName.toLocaleLowerCase()}`;
+    const key = `${kiddai2.folderId}::${designerFolderName}::${record.projectNumber}::${record.customerName.toLocaleLowerCase()}`;
     const cachedValue = sellingFolderCacheRef.current.get(key);
     if (cachedValue) {
       return cachedValue;
@@ -1600,6 +1630,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       kiddai2.folderId,
       designerFolderName,
       record.customerName,
+      record.projectNumber,
     );
     const results = matches.map<ProjectSearchResult>((match: SellingCustomerFolderOption) => ({
       projectNumber: record.projectNumber,
@@ -1696,11 +1727,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
             });
       const usableResults = exactMatches.length > 0 ? exactMatches : filteredResults;
       if (usableResults.length === 0) {
-        throw new Error(
-          mode === "selling"
-            ? `Customer folder not found. Checked Kiddai2/ลูกค้ารอเขียนแบบ/${SELLING_DESIGNER_FOLDER_NAMES[designer]}/Still Active for “${record.customerName}”.`
-            : `No project folder was found for ${record.projectNumber} ${record.customerName}.`,
-        );
+        setMissingFolderReminder(record);
+        return;
       }
       // Deposit: always use the best main folder — no multi-folder picker.
       if (mode === "deposit") {
@@ -2058,6 +2086,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     customerName: string,
     designerName: DesignerName,
     destination: "active" | "freeze",
+    projectNumber: string,
   ) {
     let kiddai2;
     try {
@@ -2069,10 +2098,81 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     window.localStorage.setItem(KIDDAI2_FOLDER_ID_KEY, kiddai2.folderId);
     const designerFolderName = SELLING_DESIGNER_FOLDER_NAMES[designerName];
     sellingFolderCacheRef.current.delete(
-      `${kiddai2.folderId}::${designerFolderName}::${customerName.toLocaleLowerCase()}`,
+      `${kiddai2.folderId}::${designerFolderName}::${projectNumber}::${customerName.toLocaleLowerCase()}`,
     );
-    await moveSellingCustomerFolder(kiddai2.folderId, designerFolderName, customerName, destination);
+    await moveSellingCustomerFolder(
+      kiddai2.folderId,
+      designerFolderName,
+      customerName,
+      destination,
+      projectNumber,
+    );
     setFolderPlaceRevision((value) => value + 1);
+  }
+
+  function depositQueueFor(record: CustomerRecord) {
+    const stage = sellingStageRef.current;
+    if (!stage) {
+      return "";
+    }
+    return readDepositQueueNumber(stage.rows, record.projectNumber, designer);
+  }
+
+  async function copySellingCustomerToDeposit(record: CustomerRecord, queueNumber: string) {
+    if (
+      depositingProjectsRef.current.has(record.projectNumber) ||
+      freezingProjectsRef.current.has(record.projectNumber) ||
+      (mode === "selling" && sellingView !== "active") ||
+      (mode === "deposit" && depositView !== "active") ||
+      (mode !== "selling" && mode !== "deposit")
+    ) {
+      return;
+    }
+    depositingProjectsRef.current.add(record.projectNumber);
+    setActionError("");
+    setActionMessage(`Moving ${record.customerName} to deposit ${queueNumber}…`);
+    try {
+      if (connection.status !== "Connected") {
+        const restored = await refreshGoogleConnection();
+        if (restored.errorMessage || restored.connection?.status !== "Connected") {
+          throw new Error(restored.errorMessage || "Connect Google in Settings first.");
+        }
+      }
+      let kiddai2;
+      try {
+        kiddai2 = await resolveKiddai2Root(null);
+      } catch {
+        const configuredKiddai2 = window.localStorage.getItem(KIDDAI2_FOLDER_ID_KEY)?.trim() ?? "";
+        kiddai2 = await resolveKiddai2Root(configuredKiddai2 || null);
+      }
+      window.localStorage.setItem(KIDDAI2_FOLDER_ID_KEY, kiddai2.folderId);
+      const result = await copyStillActiveContentsIntoDepositFolder({
+        kiddai2FolderId: kiddai2.folderId,
+        designerFolderName: SELLING_DESIGNER_FOLDER_NAMES[designer],
+        customerName: record.customerName,
+        sellingProjectNumber: mode === "deposit" ? "" : record.projectNumber,
+        depositQueueNumber: queueNumber,
+      });
+      const copiedLabel =
+        result.copiedCount === 1 ? "1 file" : `${result.copiedCount} files`;
+      const alreadyLabel =
+        result.skippedCount > 0 ? ` ${result.skippedCount} already there.` : "";
+      setFolderPlaceRevision((value) => value + 1);
+      setDepositFolderRevision((value) => value + 1);
+      setActionMessage(
+        `Moved ${result.sourceFolderName} to ${result.driveName}, then copied ${copiedLabel} into ${result.destinationFolderName}.${alreadyLabel}`,
+      );
+    } catch (error) {
+      setActionMessage("");
+      const message = getErrorMessage(error);
+      if (message.startsWith("No folder for ")) {
+        setMissingFolderReminder(record);
+      } else {
+        setActionError(message);
+      }
+    } finally {
+      depositingProjectsRef.current.delete(record.projectNumber);
+    }
   }
 
   async function freezeSellingCustomer(record: CustomerRecord) {
@@ -2136,7 +2236,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         targetCell.text = savedValue || "Yes";
       }
       try {
-        await relocateCustomerFolder(record.customerName, designer, "freeze");
+        await relocateCustomerFolder(record.customerName, designer, "freeze", record.projectNumber);
       } catch (folderError) {
         setActionError(getErrorMessage(folderError));
       }
@@ -2149,7 +2249,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }
 
   async function returnFrozenCustomer(record: CustomerRecord) {
-    if (mode !== "selling" || sellingView !== "freeze") {
+    if (mode !== "selling") {
       return;
     }
     const ownerName = DESIGNERS.find((name) => matchDepositStageOwner(record.owner || designer, name)) ?? designer;
@@ -2214,7 +2314,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         targetCell.text = "";
       }
       try {
-        await relocateCustomerFolder(record.customerName, ownerName, "active");
+        await relocateCustomerFolder(record.customerName, ownerName, "active", record.projectNumber);
       } catch (folderError) {
         setActionError(getErrorMessage(folderError));
       }
@@ -2238,16 +2338,63 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     }
   }
 
+  function clearSellingTapTimer(recordId: string) {
+    const timer = sellingTapTimerRef.current.get(recordId);
+    if (timer) {
+      window.clearTimeout(timer);
+      sellingTapTimerRef.current.delete(recordId);
+    }
+  }
+
   function onSellingProjectClick(record: CustomerRecord) {
     const now = Date.now();
     const previous = sellingTapRef.current.get(record.id);
     const count = previous && now - previous.at < 800 ? previous.count + 1 : 1;
-    if (count >= 5) {
+    sellingTapRef.current.set(record.id, { count, at: now });
+
+    if (sellingView === "freeze") {
+      if (count >= 5) {
+        clearSellingTapTimer(record.id);
+        sellingTapRef.current.delete(record.id);
+        setPendingReturnToSelling(record);
+      }
+      return;
+    }
+
+    if (count >= 7) {
+      clearSellingTapTimer(record.id);
       sellingTapRef.current.delete(record.id);
-      if (sellingView === "freeze") {
-        void returnFrozenCustomer(record);
+      const queueNumber = depositQueueFor(record);
+      if (queueNumber) {
+        setPendingDepositMove({ record, queueNumber });
       } else {
+        setDepositQueueReminder(record);
+      }
+      return;
+    }
+
+    if (count >= 5) {
+      clearSellingTapTimer(record.id);
+      const timer = window.setTimeout(() => {
+        sellingTapTimerRef.current.delete(record.id);
+        sellingTapRef.current.delete(record.id);
         void freezeSellingCustomer(record);
+      }, 900);
+      sellingTapTimerRef.current.set(record.id, timer);
+    }
+  }
+
+  function onDepositProjectClick(record: CustomerRecord) {
+    const now = Date.now();
+    const previous = sellingTapRef.current.get(record.id);
+    const count = previous && now - previous.at < 800 ? previous.count + 1 : 1;
+    if (count >= 7) {
+      sellingTapRef.current.delete(record.id);
+      const queueNumber = record.projectNumber.trim().match(/\d{4,}/u)?.[0] ?? "";
+      if (queueNumber) {
+        setPendingDepositMove({ record, queueNumber });
+      } else {
+        setDepositQueueReminder(record);
       }
       return;
     }
@@ -2465,12 +2612,26 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }
 
-  function folderInCorrectPlace(customerName: string) {
+  function depositFolderStatus(projectNumber: string) {
+    if (mode !== "deposit" || depositView !== "active" || !depositFolderState) {
+      return null;
+    }
+    return depositFolderState[projectNumber.trim()] ?? null;
+  }
+
+  function folderInCorrectPlace(customerName: string, projectNumber: string) {
+    if (mode === "deposit") {
+      const status = depositFolderStatus(projectNumber);
+      if (!status) {
+        return true;
+      }
+      return status === "ready";
+    }
     if (mode !== "selling" || !folderPlaces) {
       return true;
     }
     const names = sellingView === "freeze" ? folderPlaces.freeze : folderPlaces.active;
-    return names.some((folderName) => folderNameMatchesCustomer(folderName, customerName));
+    return names.some((folderName) => folderNameMatchesCustomer(folderName, customerName, projectNumber));
   }
 
   function actionButton(
@@ -2480,9 +2641,14 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     icon: "folder" | "sheet" | "presentation",
   ) {
     const isBusy = busyActionKey === `${record.id}:${action}`;
-    const missingFolder = icon === "folder" && !folderInCorrectPlace(record.customerName);
+    const missingFolder = icon === "folder" && !folderInCorrectPlace(record.customerName, record.projectNumber);
     const Icon = icon === "folder" ? FolderOpen : icon === "presentation" ? Presentation : Sheet;
-    const placeName = sellingView === "freeze" ? "Freeze" : "Still Active";
+    const depositStatus = depositFolderStatus(record.projectNumber);
+    const placeName = mode === "deposit"
+      ? depositStatus === "missing"
+        ? "Deposit folder is not created yet"
+        : "No files have been moved into this deposit folder"
+      : `No folder in ${sellingView === "freeze" ? "Freeze" : "Still Active"}`;
     return (
       <button
         className={`customer-action customer-action--${action}${missingFolder ? " customer-action--missing" : ""}${isBusy ? " customer-action--busy" : ""}`}
@@ -2490,8 +2656,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         onClick={() => void beginCustomerAction(record, action)}
         disabled={Boolean(busyActionKey)}
         aria-busy={isBusy}
-        aria-label={isBusy ? `Working on ${label}` : missingFolder ? `No folder in ${placeName}` : label}
-        title={missingFolder ? `No folder in ${placeName}` : label}
+        aria-label={isBusy ? `Working on ${label}` : missingFolder ? placeName : label}
+        title={missingFolder ? placeName : label}
       >
         {isBusy ? <LoaderCircle className="customer-action__spinner" size={14} /> : <Icon size={14} />}
         <span className="customer-action__label">{isBusy ? "Working…" : label}</span>
@@ -2754,10 +2920,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   const hasAlert = hasUnread || hasRemind;
                   const latestPreview = unreadForRow[0]?.preview;
                   const rowClass = hasAlert ? "customer-row--unread" : undefined;
-                  const nameUnreadClass = hasAlert ? " customer-name--unread" : "";
                   const missingContact = !record.customerUrl.trim();
-                  const missingFolder = mode === "selling" && !folderInCorrectPlace(record.customerName);
-                  const nameUnlinkedClass = missingContact || missingFolder ? " customer-name--unlinked" : "";
+                  const nameUnlinkedClass = missingContact ? " customer-name--unlinked" : "";
+                  const depositQueue = mode === "selling" && sellingView === "active" ? depositQueueFor(record) : "";
                   return (
                   <tr key={record.id} className={rowClass}>
                     <td data-label="Project">
@@ -2774,6 +2939,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             onSellingProjectClick(record);
                             return;
                           }
+                          if (mode === "deposit" && depositView === "active") {
+                            onDepositProjectClick(record);
+                          }
                           if (event.detail === 3) {
                             toggleReminder(record);
                           }
@@ -2781,9 +2949,13 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                         title={
                           mode === "selling" && sellingView === "freeze"
                             ? "Tap 5 times to move this customer back to Selling"
-                            : mode === "selling"
-                              ? "Tap 5 times to move this customer to Freeze"
-                              : "Triple-click to show or hide the reminder"
+                            : depositQueue
+                              ? `Tap 5 times to Freeze. Tap 7 times to confirm a move to deposit ${depositQueue}`
+                              : mode === "selling"
+                                ? "Tap 5 times to move this customer to Freeze"
+                                : mode === "deposit" && depositView === "active"
+                                  ? "Tap 7 times to move Still Active files into this deposit folder"
+                                  : "Triple-click to show or hide the reminder"
                         }
                       >
                         {record.projectNumber}
@@ -2803,19 +2975,17 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                           </button>
                         ) : null}
                         <button
-                          className={`customer-name${nameUnreadClass}${nameUnlinkedClass}`}
+                          className={`customer-name${nameUnlinkedClass}`}
                           type="button"
                           onClick={() => void openCustomerContact(record)}
                           title={
                             missingContact
                               ? "No Facebook or LINE link on this customer"
-                              : missingFolder
-                                ? `No folder in ${sellingView === "freeze" ? "Freeze" : "Still Active"}`
                               : hasRemind
-                              ? "Check this customer again"
-                              : latestPreview
-                                ? `New message: ${latestPreview}`
-                                : undefined
+                                ? "Check this customer again"
+                                : latestPreview
+                                  ? `New message: ${latestPreview}`
+                                  : undefined
                           }
                         >
                           {hasUnread && !hasRemind ? (
@@ -2832,7 +3002,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             </span>
                           ) : null}
                           <span className="customer-name__text">{record.customerName}</span>
-                          <ExternalLink size={13} />
+                          {record.customerUrl.trim() ? <ExternalLink size={13} /> : null}
                         </button>
                       </div>
                     </td>
@@ -2923,6 +3093,123 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
           </div>
         )}
       </section>
+
+      {missingFolderReminder ? (
+        <div className="workflow-modal-backdrop workflow-modal-backdrop--centered">
+          <div className="finder-loading-dialog qc-action-dialog qc-action-dialog--alert">
+            <p className="panel__label">Folder</p>
+            <h3 className="panel__title">Folder not found</h3>
+            <p className="qc-action-dialog__folder">
+              {missingFolderReminder.projectNumber} · {missingFolderReminder.customerName}
+            </p>
+            <p className="qc-action-dialog__message">
+              {mode === "selling"
+                ? `No folder in Still Active for ${SELLING_DESIGNER_FOLDER_NAMES[designer]}.`
+                : "No folder in Still Active or Freeze. Nothing was moved."}
+            </p>
+            <div className="qc-action-dialog__actions">
+              <button
+                className="search-form__button"
+                type="button"
+                onClick={() => setMissingFolderReminder(null)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {depositQueueReminder ? (
+        <div className="workflow-modal-backdrop workflow-modal-backdrop--centered">
+          <div className="finder-loading-dialog qc-action-dialog qc-action-dialog--alert">
+            <p className="panel__label">Deposit</p>
+            <h3 className="panel__title">Queue number is not ready</h3>
+            <p className="qc-action-dialog__folder">
+              {depositQueueReminder.projectNumber} · {depositQueueReminder.customerName}
+            </p>
+            <p className="qc-action-dialog__message">Admin needs to add the queue number and create the queue folder first. Nothing was moved.</p>
+            <div className="qc-action-dialog__actions">
+              <button
+                className="search-form__button"
+                type="button"
+                onClick={() => setDepositQueueReminder(null)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingDepositMove ? (
+        <div className="workflow-modal-backdrop workflow-modal-backdrop--centered">
+          <div className="finder-loading-dialog qc-action-dialog">
+            <p className="panel__label">Deposit</p>
+            <h3 className="panel__title">Move to the deposit folder?</h3>
+            <p className="qc-action-dialog__folder">
+              {pendingDepositMove.record.projectNumber} · {pendingDepositMove.record.customerName}
+            </p>
+            <p>
+              This moves the Still Active folder onto the deposited drive, then copies it into queue folder{" "}
+              {pendingDepositMove.queueNumber}.
+            </p>
+            <div className="qc-action-dialog__actions">
+              <button
+                className="search-form__button"
+                type="button"
+                onClick={() => {
+                  const pending = pendingDepositMove;
+                  setPendingDepositMove(null);
+                  void copySellingCustomerToDeposit(pending.record, pending.queueNumber);
+                }}
+              >
+                Move to deposit
+              </button>
+              <button
+                className="search-form__button search-form__button--secondary"
+                type="button"
+                onClick={() => setPendingDepositMove(null)}
+              >
+                Keep in Still Active
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingReturnToSelling ? (
+        <div className="workflow-modal-backdrop workflow-modal-backdrop--centered">
+          <div className="finder-loading-dialog qc-action-dialog">
+            <p className="panel__label">Freeze</p>
+            <h3 className="panel__title">Send back to Selling?</h3>
+            <p className="qc-action-dialog__folder">
+              {pendingReturnToSelling.projectNumber} · {pendingReturnToSelling.customerName}
+            </p>
+            <p>This clears Freeze and moves the Drive folder back to Still Active.</p>
+            <div className="qc-action-dialog__actions">
+              <button
+                className="search-form__button"
+                type="button"
+                onClick={() => {
+                  const record = pendingReturnToSelling;
+                  setPendingReturnToSelling(null);
+                  void returnFrozenCustomer(record);
+                }}
+              >
+                Send to Selling
+              </button>
+              <button
+                className="search-form__button search-form__button--secondary"
+                type="button"
+                onClick={() => setPendingReturnToSelling(null)}
+              >
+                Keep in Freeze
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {pendingFolderOpen ? (
         <div className="workflow-modal-backdrop workflow-modal-backdrop--centered">

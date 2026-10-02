@@ -1164,6 +1164,12 @@ a {
   word-break: break-word;
 }
 
+.qc-action-dialog--alert .panel__title,
+.qc-action-dialog--alert .qc-action-dialog__folder,
+.qc-action-dialog--alert .qc-action-dialog__message {
+  color: #b42318;
+}
+
 .qc-action-dialog__actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
