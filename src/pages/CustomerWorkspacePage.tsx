@@ -391,10 +391,33 @@ function isProjectNumber(value: string) {
 
 function parseDesignerCustomers(rows: WorkflowCell[][], mode: CustomerMode) {
   const records: CustomerRecord[] = [];
+  // Designer sheets can gain columns between Selling, Deposit, and Clearing.
+  // Locate the deposit Name header separately from the Selling Name in column B.
+  const headerRows = rows.slice(0, 8);
+  const depositNameColumn = headerRows
+    .map((row) => row.findIndex((cell, index) => index >= 6 && cell.text.trim().toLocaleLowerCase() === "name"))
+    .find((index) => index >= 0) ?? 7;
+  const projectColumn = mode === "selling" ? 0 : depositNameColumn - 1;
+  const customerColumn = mode === "selling" ? 1 : depositNameColumn;
+  const clearingColumn = (labels: string[], fallback: number) => {
+    for (const row of headerRows) {
+      const index = row.findIndex((cell, column) =>
+        column > depositNameColumn && labels.includes(cell.text.trim().toLocaleLowerCase()),
+      );
+      if (index >= 0) return index;
+    }
+    return fallback;
+  };
+  const clearing = {
+    woodColor: clearingColumn(["สีไม้"], 11),
+    confirmation: clearingColumn(["คอนเฟิร์ม"], 12),
+    queueNumber: clearingColumn(["เลขคิว"], 13),
+    qc: clearingColumn(["qc"], 14),
+    pieces: clearingColumn(["จำนวนชิ้นงาน"], 15),
+    sendCnc: clearingColumn(["ส่ง cnc"], 16),
+  };
 
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const projectColumn = mode === "selling" ? 0 : 6;
-    const customerColumn = mode === "selling" ? 1 : 7;
     const projectNumber = getCellText(rows, rowIndex, projectColumn);
     const customerName = getCellText(rows, rowIndex, customerColumn);
 
@@ -408,15 +431,15 @@ function parseDesignerCustomers(rows: WorkflowCell[][], mode: CustomerMode) {
       projectNumber,
       customerName,
       customerUrl: getCellUrl(rows, rowIndex, customerColumn),
-      amount: getCellText(rows, rowIndex, mode === "selling" ? 2 : 8),
-      deadline: getCellText(rows, rowIndex, mode === "selling" ? 3 : 9),
-      installation: getCellText(rows, rowIndex, mode === "selling" ? 4 : 10),
-      woodColor: mode === "deposit" ? getCellText(rows, rowIndex, 11) : "",
-      confirmation: mode === "deposit" ? getCellText(rows, rowIndex, 12) : "",
-      queueNumber: mode === "deposit" ? getCellText(rows, rowIndex, 13) : "",
-      qc: mode === "deposit" ? getCellText(rows, rowIndex, 14) : "",
-      pieces: mode === "deposit" ? getCellText(rows, rowIndex, 15) : "",
-      sendCnc: mode === "deposit" ? getCellText(rows, rowIndex, 16) : "",
+      amount: getCellText(rows, rowIndex, customerColumn + 1),
+      deadline: getCellText(rows, rowIndex, customerColumn + 2),
+      installation: getCellText(rows, rowIndex, customerColumn + 3),
+      woodColor: mode === "deposit" ? getCellText(rows, rowIndex, clearing.woodColor) : "",
+      confirmation: mode === "deposit" ? getCellText(rows, rowIndex, clearing.confirmation) : "",
+      queueNumber: mode === "deposit" ? getCellText(rows, rowIndex, clearing.queueNumber) : "",
+      qc: mode === "deposit" ? getCellText(rows, rowIndex, clearing.qc) : "",
+      pieces: mode === "deposit" ? getCellText(rows, rowIndex, clearing.pieces) : "",
+      sendCnc: mode === "deposit" ? getCellText(rows, rowIndex, clearing.sendCnc) : "",
       cncTeam: "",
       owner: "",
       finishedAt: "",

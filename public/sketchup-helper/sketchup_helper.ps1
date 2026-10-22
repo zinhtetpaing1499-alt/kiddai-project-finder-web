@@ -102,12 +102,14 @@ function Save-DriveFile([string]$FileId, [string]$AccessToken, [string]$Destinat
     $response.Close()
   }
   try {
-    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
-    Move-Item -LiteralPath $temporary -Destination $Destination
+    if (Test-Path -LiteralPath $Destination) {
+      [IO.File]::Replace($temporary, $Destination, [NullString]::Value)
+    } else {
+      [IO.File]::Move($temporary, $Destination)
+    }
   } catch {
     Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $Destination) { return }
-    throw "SketchUp still has this file open. Close SketchUp, then try the icon again."
+    throw "Could not replace the local file with the latest Drive version. Your existing file was kept. Close this model in SketchUp, then try the icon again."
   }
 }
 
@@ -179,6 +181,7 @@ $script:WatchGeneration = [hashtable]::Synchronized(@{})
 $script:WatchRuns = @()
 
 function Start-SaveWatch([string]$Path, [string]$FileId, [string]$AccessToken, [string]$RefreshToken, [string]$RefreshUrl) {
+  if ($script:WatchGeneration.ContainsKey($FileId)) { return }
   if (-not $script:WatchGeneration.ContainsKey($FileId)) { $script:WatchGeneration[$FileId] = 0 }
   $script:WatchGeneration[$FileId] = [int]$script:WatchGeneration[$FileId] + 1
   $generation = [int]$script:WatchGeneration[$FileId]
@@ -189,14 +192,37 @@ function Start-SaveWatch([string]$Path, [string]$FileId, [string]$AccessToken, [
     function Write-WatchLog([string]$Message) {
       Add-Content -LiteralPath (Join-Path $LogFolder "helper.log") -Value ("{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message)
     }
-    function Read-FileBytes([string]$FilePath) {
-      $stream = [IO.File]::Open($FilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    function New-UploadSnapshot([string]$FilePath, [long]$ExpectedSize, [long]$ExpectedTime) {
+      $temporary = [IO.Path]::GetTempFileName()
+      $stream = $null
+      $output = $null
       try {
-        $memory = New-Object IO.MemoryStream
-        $stream.CopyTo($memory)
-        return $memory.ToArray()
+        $before = Get-Item -LiteralPath $FilePath
+        if ($before.Length -ne $ExpectedSize -or $before.LastWriteTimeUtc.Ticks -ne $ExpectedTime) {
+          throw "The model is still saving. Upload will retry after it finishes."
+        }
+        $sharing = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+        $stream = [IO.File]::Open($FilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, $sharing)
+        $output = [IO.File]::Create($temporary)
+        $stream.CopyTo($output, 262144)
+        $output.Dispose()
+        $output = $null
+        $stream.Dispose()
+        $stream = $null
+        $after = Get-Item -LiteralPath $FilePath
+        if ($after.Length -ne $ExpectedSize -or $after.LastWriteTimeUtc.Ticks -ne $ExpectedTime -or
+            (Get-Item -LiteralPath $temporary).Length -ne $ExpectedSize) {
+          throw "The model changed while preparing the upload. Upload will retry."
+        }
+        return $temporary
+      } catch {
+        if ($output) { $output.Dispose(); $output = $null }
+        if ($stream) { $stream.Dispose(); $stream = $null }
+        [IO.File]::Delete($temporary)
+        throw
       } finally {
-        $stream.Close()
+        if ($output) { $output.Dispose() }
+        if ($stream) { $stream.Dispose() }
       }
     }
     function Update-AccessToken([string]$Token, [string]$Url) {
@@ -218,56 +244,65 @@ function Start-SaveWatch([string]$Path, [string]$FileId, [string]$AccessToken, [
       if (-not $access) { throw "Google access expired. Connect Google in Settings, then open the file again." }
       return $access
     }
-    function Remove-DriveFile([string]$Id, [string]$Token) {
-      $request = [System.Net.HttpWebRequest]::Create("https://www.googleapis.com/drive/v3/files/$([uri]::EscapeDataString($Id))?supportsAllDrives=true")
-      $request.Method = "DELETE"
-      $request.Headers["Authorization"] = "Bearer $Token"
-      $request.Timeout = 30000
-      $response = $request.GetResponse()
-      $response.Close()
-    }
-    function Send-SameDriveFile([string]$Id, [string]$Token, [string]$FilePath) {
-      $bytes = Read-FileBytes $FilePath
-      $start = [System.Net.HttpWebRequest]::Create("https://www.googleapis.com/upload/drive/v3/files/$([uri]::EscapeDataString($Id))?uploadType=resumable&supportsAllDrives=true&fields=id,modifiedTime,size")
-      $start.Method = "PATCH"
-      $start.Headers["Authorization"] = "Bearer $Token"
-      $start.ContentType = "application/json; charset=UTF-8"
-      $start.Headers["X-Upload-Content-Type"] = "application/octet-stream"
-      $start.Headers["X-Upload-Content-Length"] = [string]$bytes.Length
-      $start.Timeout = 60000
-      $meta = [Text.Encoding]::UTF8.GetBytes("{}")
-      $start.ContentLength = $meta.Length
-      $metaStream = $start.GetRequestStream()
-      $metaStream.Write($meta, 0, $meta.Length)
-      $metaStream.Close()
-      $started = $start.GetResponse()
-      $session = $started.Headers["Location"]
-      $started.Close()
-      if (-not $session) { throw "Could not start saving the SketchUp file back to Drive." }
-      $put = [System.Net.HttpWebRequest]::Create($session)
-      $put.Method = "PUT"
-      $put.ContentType = "application/octet-stream"
-      $put.ContentLength = $bytes.Length
-      $put.Timeout = 300000
-      $putStream = $put.GetRequestStream()
-      $putStream.Write($bytes, 0, $bytes.Length)
-      $putStream.Close()
-      $saved = $put.GetResponse()
-      $reader = New-Object IO.StreamReader($saved.GetResponseStream())
-      $raw = $reader.ReadToEnd()
-      $reader.Close()
-      $saved.Close()
-      $version = ""
-      if ($raw) {
-        $savedInfo = $raw | ConvertFrom-Json
-        $returned = [string]$savedInfo.id
-        if ($returned -and $returned -ne $Id) {
-          try { Remove-DriveFile $returned $Token } catch {}
-          throw "Drive made a new file. That copy was removed. The original file was not replaced."
+    function Send-SameDriveFile([string]$Id, [string]$Token, [string]$FilePath, [long]$ExpectedSize, [long]$ExpectedTime) {
+      $snapshot = New-UploadSnapshot $FilePath $ExpectedSize $ExpectedTime
+      $source = $null
+      $putStream = $null
+      $saved = $null
+      $reader = $null
+      try {
+        $start = [System.Net.HttpWebRequest]::Create("https://www.googleapis.com/upload/drive/v3/files/$([uri]::EscapeDataString($Id))?uploadType=resumable&supportsAllDrives=true&fields=id,modifiedTime,size")
+        $start.Method = "PATCH"
+        $start.Headers["Authorization"] = "Bearer $Token"
+        $start.ContentType = "application/json; charset=UTF-8"
+        $start.Headers["X-Upload-Content-Type"] = "application/octet-stream"
+        $start.Headers["X-Upload-Content-Length"] = [string]$ExpectedSize
+        $start.Timeout = 60000
+        $meta = [Text.Encoding]::UTF8.GetBytes("{}")
+        $start.ContentLength = $meta.Length
+        $metaStream = $start.GetRequestStream()
+        $metaStream.Write($meta, 0, $meta.Length)
+        $metaStream.Close()
+        $started = $start.GetResponse()
+        $session = $started.Headers["Location"]
+        $started.Close()
+        if (-not $session) { throw "Could not start saving the SketchUp file back to Drive." }
+        $put = [System.Net.HttpWebRequest]::Create($session)
+        $put.Method = "PUT"
+        $put.ContentType = "application/octet-stream"
+        $put.ContentLength = $ExpectedSize
+        $put.AllowWriteStreamBuffering = $false
+        $put.Timeout = 300000
+        $put.ReadWriteTimeout = 300000
+        $source = [IO.File]::OpenRead($snapshot)
+        $putStream = $put.GetRequestStream()
+        $source.CopyTo($putStream, 262144)
+        $putStream.Dispose()
+        $putStream = $null
+        $source.Dispose()
+        $source = $null
+        $saved = $put.GetResponse()
+        $reader = New-Object IO.StreamReader($saved.GetResponseStream())
+        $raw = $reader.ReadToEnd()
+        $reader.Close()
+        $saved.Close()
+        $version = ""
+        if ($raw) {
+          $savedInfo = $raw | ConvertFrom-Json
+          $returned = [string]$savedInfo.id
+          if ($returned -ne $Id -or [long]$savedInfo.size -ne $ExpectedSize -or -not $savedInfo.modifiedTime) {
+            throw "Drive did not confirm the complete upload to the original file."
+          }
+          $version = "$($savedInfo.modifiedTime)|$($savedInfo.size)"
         }
-        $version = "$($savedInfo.modifiedTime)|$($savedInfo.size)"
+        return $version
+      } finally {
+        if ($reader) { $reader.Dispose() }
+        if ($saved) { $saved.Dispose() }
+        if ($putStream) { $putStream.Dispose() }
+        if ($source) { $source.Dispose() }
+        [IO.File]::Delete($snapshot)
       }
-      return $version
     }
     Start-Sleep -Seconds 1
     if (-not (Test-Path -LiteralPath $Path)) { return }
@@ -294,17 +329,20 @@ function Start-SaveWatch([string]$Path, [string]$FileId, [string]$AccessToken, [
       try {
         $savedVersion = ""
         try {
-          $savedVersion = Send-SameDriveFile $FileId $AccessToken $Path
+          $savedVersion = Send-SameDriveFile $FileId $AccessToken $Path $seenSize $seenTime
         } catch [System.Net.WebException] {
           $status = 0
           if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
           if ($status -ne 401 -or -not $RefreshToken -or -not $RefreshUrl) { throw }
           $AccessToken = Update-AccessToken $RefreshToken $RefreshUrl
-          $savedVersion = Send-SameDriveFile $FileId $AccessToken $Path
+          $savedVersion = Send-SameDriveFile $FileId $AccessToken $Path $seenSize $seenTime
         }
-        if ($savedVersion) { Set-Content -LiteralPath "$Path.kiddai" -Value $savedVersion -Encoding Ascii }
-        $baselineSize = $quiet.Length
-        $baselineTime = $quiet.LastWriteTimeUtc.Ticks
+        if (-not $savedVersion) { throw "Drive did not confirm the saved version." }
+        Set-Content -LiteralPath "$Path.kiddai" -Value $savedVersion -Encoding Ascii
+        # Record the saved snapshot, not a newer edit made during its upload.
+        (Get-Item -LiteralPath "$Path.kiddai").LastWriteTimeUtc = [datetime]::new($seenTime, [DateTimeKind]::Utc)
+        $baselineSize = $seenSize
+        $baselineTime = $seenTime
         Write-WatchLog "Saved $([IO.Path]::GetFileName($Path)) back to Drive."
       } catch {
         Write-WatchLog "Could not save $([IO.Path]::GetFileName($Path)) back to Drive: $($_.Exception.Message)"
@@ -400,11 +438,23 @@ while ($true) {
       } else {
         $destination = Join-Path (Get-SaveDir) $fileName
         try {
-          $driveVersion = ""
-          try { $driveVersion = Get-DriveVersion $fileId $accessToken } catch { $driveVersion = "" }
+          # Do not overwrite a model that is open or has not synced to Drive.
+          $driveVersion = Get-DriveVersion $fileId $accessToken
           $stampPath = "$destination.kiddai"
           $haveLocal = Test-Path -LiteralPath $destination
           $sameVersion = $haveLocal -and $driveVersion -and (Test-Path -LiteralPath $stampPath) -and ((Get-Content -LiteralPath $stampPath -Raw).Trim() -eq $driveVersion)
+          $pendingLocalSave = $haveLocal -and (Test-Path -LiteralPath $stampPath) -and
+            (Get-Item -LiteralPath $destination).LastWriteTimeUtc -gt (Get-Item -LiteralPath $stampPath).LastWriteTimeUtc
+          if ($pendingLocalSave -and -not $sameVersion) {
+            throw "This computer has local edits that have not uploaded, and Drive has a different version. Your local file was kept. Resolve these versions before reopening."
+          }
+          $openModel = Get-CimInstance Win32_Process -Filter "Name='SketchUp.exe'" | Where-Object {
+            $_.CommandLine -and $_.CommandLine.IndexOf('"' + $destination + '"', [StringComparison]::OrdinalIgnoreCase) -ge 0
+          } | Select-Object -First 1
+          if ($openModel) {
+            Start-SaveWatch $destination $fileId $accessToken $refreshToken $refreshUrl
+            throw "This model is already open in SketchUp. Use that window. To reload from Drive, save and close it first."
+          }
           if ($sameVersion) {
             Write-Log "Opened the Drive copy already on this computer: $fileName."
           } else {

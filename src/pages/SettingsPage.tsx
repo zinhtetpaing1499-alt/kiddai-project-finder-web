@@ -8,6 +8,7 @@ import {
   WORKFLOW_GOOGLE_SHEET_URL_KEY,
 } from "../constants/storage";
 import { useGoogleConnection } from "../contexts/GoogleConnectionContext";
+import { sketchupHelperIsRunning } from "../services/sketchupHelper";
 import {
   fetchSpreadsheetMetadata,
   listSellingDesignerRoutes,
@@ -69,10 +70,26 @@ export function SettingsPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [installCopied, setInstallCopied] = useState(false);
   const [windowsInstallCopied, setWindowsInstallCopied] = useState(false);
-  const macInstallScript = `curl -fsSL "${window.location.origin}/sketchup-helper/Install-Kiddai-SketchUp-Helper.command" -o /tmp/kiddai-sketchup-install.command && bash /tmp/kiddai-sketchup-install.command`;
-  const windowsInstallScript = `curl.exe -fsSL -o \$env:TEMP\\k.ps1 ${window.location.origin}/sketchup-helper/Install-Kiddai-SketchUp-Helper.ps1
-Unblock-File \$env:TEMP\\k.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File \$env:TEMP\\k.ps1`;
+  const [helperStatus, setHelperStatus] = useState<"checking" | "running" | "offline">("checking");
+  async function checkHelper() {
+    setHelperStatus("checking");
+    setHelperStatus(await sketchupHelperIsRunning() ? "running" : "offline");
+  }
+  const macInstallScript = `curl -fsSL "https://kiddai.netlify.app/sketchup-helper/Install-Kiddai-SketchUp-Helper.command" -o /tmp/kiddai-sketchup-install.command && bash /tmp/kiddai-sketchup-install.command`;
+  const windowsInstallScript = `curl.exe -fSL -o "$env:TEMP\\k.ps1" "https://kiddai.netlify.app/sketchup-helper/Install-Kiddai-SketchUp-Helper.ps1"
+if ($LASTEXITCODE -eq 0) { Unblock-File "$env:TEMP\\k.ps1"; powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\\k.ps1" }`;
   const sheetSaveTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const check = async () => {
+      const running = await sketchupHelperIsRunning();
+      if (active) setHelperStatus(running ? "running" : "offline");
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 10_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     const fromCallback =
@@ -389,12 +406,25 @@ Unblock-File \$env:TEMP\\k.ps1; powershell -NoProfile -ExecutionPolicy Bypass -F
           <p className="settings-muted">
             Install once on each computer. A save updates the same Drive file, so the rest of the company sees it in Drive.
           </p>
+          <p className="settings-muted" role="status" aria-live="polite">
+            {helperStatus === "checking" ? "Checking helper on this computer..."
+              : helperStatus === "running" ? "Helper is running on this computer."
+              : "Helper is not reachable on this computer. Install it below, or use the installer again to repair startup. Allow local network access if your browser asks."}
+          </p>
+          <div className="settings-section__actions">
+            <button className="search-form__button settings-button" type="button" disabled={helperStatus === "checking"} onClick={() => void checkHelper()}>Check helper</button>
+          </div>
+          <p className="settings-muted">After installation, you can close Terminal. The helper starts in the background when you sign in after a restart. Each computer needs its own installation.</p>
           <p className="settings-muted">Mac, one time</p>
+          <p className="settings-muted">Python 3 is required on Mac. If it is not installed, download and install it first, then run the helper installer below.</p>
+          <div className="settings-section__actions">
+            <a className="search-form__button settings-button" href="https://www.python.org/downloads/macos/" target="_blank" rel="noreferrer">Download Python 3 for Mac</a>
+          </div>
           <ol className="settings-steps">
             <li>Open Terminal.</li>
             <li>Copy the script.</li>
             <li>Paste it and press Return.</li>
-            <li>A message says the helper is installed. It stays on this computer and starts when the computer starts.</li>
+            <li>Wait for the installed message, then close Terminal. After restarting, the helper starts automatically when you sign in.</li>
           </ol>
           <pre className="settings-install-script">{macInstallScript}</pre>
           <div className="settings-section__actions">
@@ -412,11 +442,15 @@ Unblock-File \$env:TEMP\\k.ps1; powershell -NoProfile -ExecutionPolicy Bypass -F
             </button>
           </div>
           <p className="settings-muted">Windows, one time</p>
+          <p className="settings-muted">Windows uses the built-in PowerShell, so Python 3 is optional for this helper.</p>
+          <div className="settings-section__actions">
+            <a className="search-form__button settings-button" href="https://www.python.org/downloads/windows/" target="_blank" rel="noreferrer">Download Python 3 for Windows</a>
+          </div>
           <ol className="settings-steps">
             <li>Press the Windows key, type PowerShell, and open Windows PowerShell. The prompt starts with PS.</li>
             <li>If a long line is stuck, press Ctrl+C.</li>
             <li>Paste the first line and press Enter. Wait until a new PS line appears.</li>
-            <li>Paste the second line and press Enter. A message says the helper is installed. It stays on this computer and starts when the computer starts.</li>
+            <li>Paste the second line and press Enter. Wait for the installed message, then press Enter to close. After restarting, the helper starts automatically when you sign in.</li>
           </ol>
           <pre className="settings-install-script">{windowsInstallScript}</pre>
           <div className="settings-section__actions">

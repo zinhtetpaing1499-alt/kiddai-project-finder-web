@@ -1,45 +1,53 @@
+param([switch]$NoPause)
 $ErrorActionPreference = "Stop"
 $raw = Get-Content -LiteralPath $PSCommandPath -Raw
-$marker = "`n### HELPER`n"
-$index = $raw.IndexOf($marker)
-if ($index -lt 0) { throw "Helper payload missing." }
-$script = $raw.Substring($index + $marker.Length).TrimStart("`r", "`n")
+$payloadMatch = [regex]::Match($raw, '(?m)^### HELPER\r?\n')
+if (-not $payloadMatch.Success) { throw "Helper payload missing." }
+$script = $raw.Substring($payloadMatch.Index + $payloadMatch.Length)
 $dest = Join-Path $env:LOCALAPPDATA "Kiddai\SketchUp Helper"
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 $helper = Join-Path $dest "sketchup_helper.ps1"
+$runner = Join-Path $dest "run-helper.ps1"
+$launcher = Join-Path $dest "start-helper.vbs"
+$legacyInstaller = 'C:\KiddaiHelper\k.ps1'
+# Stop only this helper's installed processes, never an arbitrary port owner.
+Get-CimInstance Win32_Process | Where-Object {
+  $_.ProcessId -ne $PID -and $_.Name -in @('powershell.exe', 'pwsh.exe') -and
+  ($_.CommandLine -like "*`"$helper`"*" -or $_.CommandLine -like "*`"$runner`"*" -or
+   $_.CommandLine -like "*-File $legacyInstaller*" -or $_.CommandLine -like "*-File `"$legacyInstaller`"*")
+} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Set-Content -LiteralPath $helper -Value $script -Encoding UTF8
+@'
+$mutex = New-Object System.Threading.Mutex($false, 'Local\KiddaiSketchUpHelperRunner')
+if (-not $mutex.WaitOne(0)) { $mutex.Dispose(); exit }
+try {
+  while ($true) {
+    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'sketchup_helper.ps1')
+    Start-Sleep -Seconds 5
+  }
+} finally { $mutex.ReleaseMutex(); $mutex.Dispose() }
+'@ | Set-Content -LiteralPath $runner -Encoding UTF8
+$powerShellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$command = "`"$powerShellExe`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runner`""
+$vbs = 'CreateObject("WScript.Shell").Run "' + $command.Replace('"', '""') + '", 0, False'
+Set-Content -LiteralPath $launcher -Value $vbs -Encoding Unicode
 $startup = [Environment]::GetFolderPath("Startup")
+$legacyStartup = Join-Path $startup 'KiddaiHelper.bat'
+if (Test-Path -LiteralPath $legacyStartup) {
+  if ((Get-Content -LiteralPath $legacyStartup -Raw) -match '(?i)KiddaiHelper\\k\.ps1') {
+    Move-Item -LiteralPath $legacyStartup -Destination "$legacyStartup.disabled" -Force
+  }
+}
 $lnk = Join-Path $startup "Kiddai SketchUp Helper.lnk"
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($lnk)
-$shortcut.TargetPath = "powershell.exe"
-$shortcut.Arguments = "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$helper`""
+$shortcut.TargetPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
+$shortcut.Arguments = "`"$launcher`""
 $shortcut.WorkingDirectory = $dest
+$shortcut.WindowStyle = 7
 $shortcut.Save()
 Write-Host "Installing the SketchUp helper..."
-function Stop-OldHelper {
-  $previous = $ErrorActionPreference
-  $ErrorActionPreference = "Continue"
-  try {
-    Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*sketchup_helper.ps1*" -and $_.ProcessId -ne $PID } | ForEach-Object { cmd /c "taskkill /F /PID $($_.ProcessId) >nul 2>&1" | Out-Null }
-  } catch {}
-  foreach ($line in @(netstat -ano)) {
-    if ($line -notmatch ":17341\s+\S+\s+LISTENING\s+(\d+)") { continue }
-    $owner = [int]$Matches[1]
-    if ($owner -le 0 -or $owner -eq $PID) { continue }
-    cmd /c "taskkill /F /PID $owner >nul 2>&1" | Out-Null
-  }
-  $ErrorActionPreference = $previous
-}
-Stop-OldHelper
-Start-Sleep -Seconds 1
-$startInfo = New-Object System.Diagnostics.ProcessStartInfo
-$startInfo.FileName = "powershell.exe"
-$startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$helper`""
-$startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-$startInfo.CreateNoWindow = $true
-$startInfo.UseShellExecute = $false
-[System.Diagnostics.Process]::Start($startInfo) | Out-Null
+Start-Process -FilePath $shortcut.TargetPath -ArgumentList "`"$launcher`"" -WindowStyle Hidden
 $ready = $false
 foreach ($attempt in 1..20) {
   Start-Sleep -Milliseconds 250
@@ -53,12 +61,14 @@ if (-not $ready) {
   $logPath = Join-Path $dest "helper.log"
   Write-Host "The helper did not start."
   if (Test-Path $logPath) { Get-Content -LiteralPath $logPath -Tail 12 | ForEach-Object { Write-Host $_ } }
+  throw "The helper did not start. Check $logPath."
 } else {
   Write-Host "Installed. The helper is running."
-  Write-Host "It stays on this computer and starts when the computer starts."
+  Write-Host "You can close Terminal. After restarting, it starts automatically when you sign in."
 }
 Write-Host ""
-Read-Host "Press Enter to close"
+if (-not $NoPause) { Read-Host "Press Enter to close" | Out-Null }
+exit 0
 ### HELPER
 # Kiddai SketchUp helper for Windows. Started by the installer.
 $HostAddress = "127.0.0.1"
@@ -164,12 +174,14 @@ function Save-DriveFile([string]$FileId, [string]$AccessToken, [string]$Destinat
     $response.Close()
   }
   try {
-    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
-    Move-Item -LiteralPath $temporary -Destination $Destination
+    if (Test-Path -LiteralPath $Destination) {
+      [IO.File]::Replace($temporary, $Destination, [NullString]::Value)
+    } else {
+      [IO.File]::Move($temporary, $Destination)
+    }
   } catch {
     Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $Destination) { return }
-    throw "SketchUp still has this file open. Close SketchUp, then try the icon again."
+    throw "Could not replace the local file with the latest Drive version. Your existing file was kept. Close this model in SketchUp, then try the icon again."
   }
 }
 
@@ -241,6 +253,7 @@ $script:WatchGeneration = [hashtable]::Synchronized(@{})
 $script:WatchRuns = @()
 
 function Start-SaveWatch([string]$Path, [string]$FileId, [string]$AccessToken, [string]$RefreshToken, [string]$RefreshUrl) {
+  if ($script:WatchGeneration.ContainsKey($FileId)) { return }
   if (-not $script:WatchGeneration.ContainsKey($FileId)) { $script:WatchGeneration[$FileId] = 0 }
   $script:WatchGeneration[$FileId] = [int]$script:WatchGeneration[$FileId] + 1
   $generation = [int]$script:WatchGeneration[$FileId]
@@ -251,14 +264,37 @@ function Start-SaveWatch([string]$Path, [string]$FileId, [string]$AccessToken, [
     function Write-WatchLog([string]$Message) {
       Add-Content -LiteralPath (Join-Path $LogFolder "helper.log") -Value ("{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message)
     }
-    function Read-FileBytes([string]$FilePath) {
-      $stream = [IO.File]::Open($FilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    function New-UploadSnapshot([string]$FilePath, [long]$ExpectedSize, [long]$ExpectedTime) {
+      $temporary = [IO.Path]::GetTempFileName()
+      $stream = $null
+      $output = $null
       try {
-        $memory = New-Object IO.MemoryStream
-        $stream.CopyTo($memory)
-        return $memory.ToArray()
+        $before = Get-Item -LiteralPath $FilePath
+        if ($before.Length -ne $ExpectedSize -or $before.LastWriteTimeUtc.Ticks -ne $ExpectedTime) {
+          throw "The model is still saving. Upload will retry after it finishes."
+        }
+        $sharing = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+        $stream = [IO.File]::Open($FilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, $sharing)
+        $output = [IO.File]::Create($temporary)
+        $stream.CopyTo($output, 262144)
+        $output.Dispose()
+        $output = $null
+        $stream.Dispose()
+        $stream = $null
+        $after = Get-Item -LiteralPath $FilePath
+        if ($after.Length -ne $ExpectedSize -or $after.LastWriteTimeUtc.Ticks -ne $ExpectedTime -or
+            (Get-Item -LiteralPath $temporary).Length -ne $ExpectedSize) {
+          throw "The model changed while preparing the upload. Upload will retry."
+        }
+        return $temporary
+      } catch {
+        if ($output) { $output.Dispose(); $output = $null }
+        if ($stream) { $stream.Dispose(); $stream = $null }
+        [IO.File]::Delete($temporary)
+        throw
       } finally {
-        $stream.Close()
+        if ($output) { $output.Dispose() }
+        if ($stream) { $stream.Dispose() }
       }
     }
     function Update-AccessToken([string]$Token, [string]$Url) {
@@ -280,56 +316,65 @@ function Start-SaveWatch([string]$Path, [string]$FileId, [string]$AccessToken, [
       if (-not $access) { throw "Google access expired. Connect Google in Settings, then open the file again." }
       return $access
     }
-    function Remove-DriveFile([string]$Id, [string]$Token) {
-      $request = [System.Net.HttpWebRequest]::Create("https://www.googleapis.com/drive/v3/files/$([uri]::EscapeDataString($Id))?supportsAllDrives=true")
-      $request.Method = "DELETE"
-      $request.Headers["Authorization"] = "Bearer $Token"
-      $request.Timeout = 30000
-      $response = $request.GetResponse()
-      $response.Close()
-    }
-    function Send-SameDriveFile([string]$Id, [string]$Token, [string]$FilePath) {
-      $bytes = Read-FileBytes $FilePath
-      $start = [System.Net.HttpWebRequest]::Create("https://www.googleapis.com/upload/drive/v3/files/$([uri]::EscapeDataString($Id))?uploadType=resumable&supportsAllDrives=true&fields=id,modifiedTime,size")
-      $start.Method = "PATCH"
-      $start.Headers["Authorization"] = "Bearer $Token"
-      $start.ContentType = "application/json; charset=UTF-8"
-      $start.Headers["X-Upload-Content-Type"] = "application/octet-stream"
-      $start.Headers["X-Upload-Content-Length"] = [string]$bytes.Length
-      $start.Timeout = 60000
-      $meta = [Text.Encoding]::UTF8.GetBytes("{}")
-      $start.ContentLength = $meta.Length
-      $metaStream = $start.GetRequestStream()
-      $metaStream.Write($meta, 0, $meta.Length)
-      $metaStream.Close()
-      $started = $start.GetResponse()
-      $session = $started.Headers["Location"]
-      $started.Close()
-      if (-not $session) { throw "Could not start saving the SketchUp file back to Drive." }
-      $put = [System.Net.HttpWebRequest]::Create($session)
-      $put.Method = "PUT"
-      $put.ContentType = "application/octet-stream"
-      $put.ContentLength = $bytes.Length
-      $put.Timeout = 300000
-      $putStream = $put.GetRequestStream()
-      $putStream.Write($bytes, 0, $bytes.Length)
-      $putStream.Close()
-      $saved = $put.GetResponse()
-      $reader = New-Object IO.StreamReader($saved.GetResponseStream())
-      $raw = $reader.ReadToEnd()
-      $reader.Close()
-      $saved.Close()
-      $version = ""
-      if ($raw) {
-        $savedInfo = $raw | ConvertFrom-Json
-        $returned = [string]$savedInfo.id
-        if ($returned -and $returned -ne $Id) {
-          try { Remove-DriveFile $returned $Token } catch {}
-          throw "Drive made a new file. That copy was removed. The original file was not replaced."
+    function Send-SameDriveFile([string]$Id, [string]$Token, [string]$FilePath, [long]$ExpectedSize, [long]$ExpectedTime) {
+      $snapshot = New-UploadSnapshot $FilePath $ExpectedSize $ExpectedTime
+      $source = $null
+      $putStream = $null
+      $saved = $null
+      $reader = $null
+      try {
+        $start = [System.Net.HttpWebRequest]::Create("https://www.googleapis.com/upload/drive/v3/files/$([uri]::EscapeDataString($Id))?uploadType=resumable&supportsAllDrives=true&fields=id,modifiedTime,size")
+        $start.Method = "PATCH"
+        $start.Headers["Authorization"] = "Bearer $Token"
+        $start.ContentType = "application/json; charset=UTF-8"
+        $start.Headers["X-Upload-Content-Type"] = "application/octet-stream"
+        $start.Headers["X-Upload-Content-Length"] = [string]$ExpectedSize
+        $start.Timeout = 60000
+        $meta = [Text.Encoding]::UTF8.GetBytes("{}")
+        $start.ContentLength = $meta.Length
+        $metaStream = $start.GetRequestStream()
+        $metaStream.Write($meta, 0, $meta.Length)
+        $metaStream.Close()
+        $started = $start.GetResponse()
+        $session = $started.Headers["Location"]
+        $started.Close()
+        if (-not $session) { throw "Could not start saving the SketchUp file back to Drive." }
+        $put = [System.Net.HttpWebRequest]::Create($session)
+        $put.Method = "PUT"
+        $put.ContentType = "application/octet-stream"
+        $put.ContentLength = $ExpectedSize
+        $put.AllowWriteStreamBuffering = $false
+        $put.Timeout = 300000
+        $put.ReadWriteTimeout = 300000
+        $source = [IO.File]::OpenRead($snapshot)
+        $putStream = $put.GetRequestStream()
+        $source.CopyTo($putStream, 262144)
+        $putStream.Dispose()
+        $putStream = $null
+        $source.Dispose()
+        $source = $null
+        $saved = $put.GetResponse()
+        $reader = New-Object IO.StreamReader($saved.GetResponseStream())
+        $raw = $reader.ReadToEnd()
+        $reader.Close()
+        $saved.Close()
+        $version = ""
+        if ($raw) {
+          $savedInfo = $raw | ConvertFrom-Json
+          $returned = [string]$savedInfo.id
+          if ($returned -ne $Id -or [long]$savedInfo.size -ne $ExpectedSize -or -not $savedInfo.modifiedTime) {
+            throw "Drive did not confirm the complete upload to the original file."
+          }
+          $version = "$($savedInfo.modifiedTime)|$($savedInfo.size)"
         }
-        $version = "$($savedInfo.modifiedTime)|$($savedInfo.size)"
+        return $version
+      } finally {
+        if ($reader) { $reader.Dispose() }
+        if ($saved) { $saved.Dispose() }
+        if ($putStream) { $putStream.Dispose() }
+        if ($source) { $source.Dispose() }
+        [IO.File]::Delete($snapshot)
       }
-      return $version
     }
     Start-Sleep -Seconds 1
     if (-not (Test-Path -LiteralPath $Path)) { return }
@@ -356,17 +401,20 @@ function Start-SaveWatch([string]$Path, [string]$FileId, [string]$AccessToken, [
       try {
         $savedVersion = ""
         try {
-          $savedVersion = Send-SameDriveFile $FileId $AccessToken $Path
+          $savedVersion = Send-SameDriveFile $FileId $AccessToken $Path $seenSize $seenTime
         } catch [System.Net.WebException] {
           $status = 0
           if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
           if ($status -ne 401 -or -not $RefreshToken -or -not $RefreshUrl) { throw }
           $AccessToken = Update-AccessToken $RefreshToken $RefreshUrl
-          $savedVersion = Send-SameDriveFile $FileId $AccessToken $Path
+          $savedVersion = Send-SameDriveFile $FileId $AccessToken $Path $seenSize $seenTime
         }
-        if ($savedVersion) { Set-Content -LiteralPath "$Path.kiddai" -Value $savedVersion -Encoding Ascii }
-        $baselineSize = $quiet.Length
-        $baselineTime = $quiet.LastWriteTimeUtc.Ticks
+        if (-not $savedVersion) { throw "Drive did not confirm the saved version." }
+        Set-Content -LiteralPath "$Path.kiddai" -Value $savedVersion -Encoding Ascii
+        # Record the saved snapshot, not a newer edit made during its upload.
+        (Get-Item -LiteralPath "$Path.kiddai").LastWriteTimeUtc = [datetime]::new($seenTime, [DateTimeKind]::Utc)
+        $baselineSize = $seenSize
+        $baselineTime = $seenTime
         Write-WatchLog "Saved $([IO.Path]::GetFileName($Path)) back to Drive."
       } catch {
         Write-WatchLog "Could not save $([IO.Path]::GetFileName($Path)) back to Drive: $($_.Exception.Message)"
@@ -462,11 +510,23 @@ while ($true) {
       } else {
         $destination = Join-Path (Get-SaveDir) $fileName
         try {
-          $driveVersion = ""
-          try { $driveVersion = Get-DriveVersion $fileId $accessToken } catch { $driveVersion = "" }
+          # Do not overwrite a model that is open or has not synced to Drive.
+          $driveVersion = Get-DriveVersion $fileId $accessToken
           $stampPath = "$destination.kiddai"
           $haveLocal = Test-Path -LiteralPath $destination
           $sameVersion = $haveLocal -and $driveVersion -and (Test-Path -LiteralPath $stampPath) -and ((Get-Content -LiteralPath $stampPath -Raw).Trim() -eq $driveVersion)
+          $pendingLocalSave = $haveLocal -and (Test-Path -LiteralPath $stampPath) -and
+            (Get-Item -LiteralPath $destination).LastWriteTimeUtc -gt (Get-Item -LiteralPath $stampPath).LastWriteTimeUtc
+          if ($pendingLocalSave -and -not $sameVersion) {
+            throw "This computer has local edits that have not uploaded, and Drive has a different version. Your local file was kept. Resolve these versions before reopening."
+          }
+          $openModel = Get-CimInstance Win32_Process -Filter "Name='SketchUp.exe'" | Where-Object {
+            $_.CommandLine -and $_.CommandLine.IndexOf('"' + $destination + '"', [StringComparison]::OrdinalIgnoreCase) -ge 0
+          } | Select-Object -First 1
+          if ($openModel) {
+            Start-SaveWatch $destination $fileId $accessToken $refreshToken $refreshUrl
+            throw "This model is already open in SketchUp. Use that window. To reload from Drive, save and close it first."
+          }
           if ($sameVersion) {
             Write-Log "Opened the Drive copy already on this computer: $fileName."
           } else {

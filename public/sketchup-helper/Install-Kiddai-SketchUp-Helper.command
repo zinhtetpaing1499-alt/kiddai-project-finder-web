@@ -5,9 +5,10 @@ mkdir -p "$APP_DIR"
 PYTHON="$(command -v python3 || true)"
 if ! "$PYTHON" -c 'import sys' >/dev/null 2>&1; then
   osascript -e 'display dialog "Python 3 is required once. After it finishes installing, paste the script in Terminal again." buttons {"OK"} default button "OK"'
-  open "https://www.python.org/downloads/"
+  open "https://www.python.org/downloads/macos/"
   exit 1
 fi
+PYTHON="$("$PYTHON" -c 'import sys; print(sys.executable)')"
 cat > "$APP_DIR/sketchup_helper.py" << 'HELPER'
 #!/usr/bin/env python3
 """Local helper for the Kiddai site. Leave this window open.
@@ -410,6 +411,11 @@ if __name__ == "__main__":
 HELPER
 PLIST="$HOME/Library/LaunchAgents/com.kiddai.sketchup-helper.plist"
 mkdir -p "$HOME/Library/LaunchAgents"
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/\&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+PYTHON_XML="$(xml_escape "$PYTHON")"
+APP_DIR_XML="$(xml_escape "$APP_DIR")"
 cat > "$PLIST" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -419,21 +425,37 @@ cat > "$PLIST" << EOF
   <string>com.kiddai.sketchup-helper</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$PYTHON</string>
-    <string>$APP_DIR/sketchup_helper.py</string>
+    <string>$PYTHON_XML</string>
+    <string>$APP_DIR_XML/sketchup_helper.py</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
   <key>StandardOutPath</key>
-  <string>$APP_DIR/helper.log</string>
+  <string>$APP_DIR_XML/helper.log</string>
   <key>StandardErrorPath</key>
-  <string>$APP_DIR/helper.log</string>
+  <string>$APP_DIR_XML/helper.log</string>
 </dict>
 </plist>
 EOF
 UID_NUM="$(id -u)"
 launchctl bootout "gui/$UID_NUM/com.kiddai.sketchup-helper" >/dev/null 2>&1 || true
+launchctl enable "gui/$UID_NUM/com.kiddai.sketchup-helper"
 launchctl bootstrap "gui/$UID_NUM" "$PLIST"
-launchctl enable "gui/$UID_NUM/com.kiddai.sketchup-helper" >/dev/null 2>&1 || true
 launchctl kickstart -k "gui/$UID_NUM/com.kiddai.sketchup-helper"
-osascript -e 'display dialog "The SketchUp helper is installed and running. It stays on this computer and starts when the computer starts." buttons {"OK"} default button "OK"'
+READY=false
+for attempt in {1..20}; do
+  if curl --silent --fail --max-time 2 http://127.0.0.1:17341/health >/dev/null; then
+    READY=true
+    break
+  fi
+  sleep 0.5
+done
+if [ "$READY" != true ]; then
+  osascript -e 'display dialog "The helper could not start. Check helper.log in Library/Application Support/Kiddai/SketchUp Helper." buttons {"OK"} default button "OK"'
+  exit 1
+fi
+osascript -e 'display dialog "The SketchUp helper is installed and running. You can close Terminal. It starts automatically when you sign in after restarting." buttons {"OK"} default button "OK"'
