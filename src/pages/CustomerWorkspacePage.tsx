@@ -1,5 +1,6 @@
 import {
   Bell,
+  Box,
   CalendarDays,
   ExternalLink,
   FolderOpen,
@@ -41,6 +42,7 @@ import {
   inspectDepositQueueFolders,
   type DepositQueueFolderState,
   findSellingCustomerFolders,
+  findSketchupFiles,
   listSellingCustomerFolderNames,
   moveSellingCustomerFolder,
   sellingFolderNameMatchesCustomer,
@@ -60,7 +62,13 @@ import {
   type GoogleDriveFolderCandidate,
   type ProjectSearchResult,
   type SellingCustomerFolderOption,
+  type SketchupDriveFile,
 } from "../services/googleApi";
+import {
+  openSketchupWithHelper,
+  SketchupHelperOfflineError,
+  sketchupHelperIsRunning,
+} from "../services/sketchupHelper";
 import {
   getStoredLinkSourceConfig,
   resolveTemplateSpreadsheetIdsFromRows,
@@ -176,6 +184,14 @@ type SellingListView = "active" | "freeze";
 
 function isDepositStageView(view: DepositListView) {
   return view === "waiting" || view === "installing" || view === "finished";
+}
+
+function depositMoveQueueNumber(record: CustomerRecord) {
+  const fromQueueField = record.queueNumber.trim().match(/\d{4,}/u)?.[0] ?? "";
+  if (fromQueueField) {
+    return fromQueueField;
+  }
+  return record.projectNumber.trim().match(/\d{4,}/u)?.[0] ?? "";
 }
 
 type PendingLocalFolderChoice = {
@@ -758,7 +774,11 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     useState<PendingCreateConfirmation | null>(null);
   const [pendingQcAction, setPendingQcAction] = useState<PendingQcAction | null>(null);
   const [pendingFolderOpen, setPendingFolderOpen] = useState<PendingFolderOpen | null>(null);
+  const [latestSketchupFile, setLatestSketchupFile] = useState<SketchupDriveFile | null>(null);
+  const [sketchupNotice, setSketchupNotice] = useState("");
   const [pendingReturnToSelling, setPendingReturnToSelling] = useState<CustomerRecord | null>(null);
+  const [freezeReturnProjects, setFreezeReturnProjects] = useState<string[]>([]);
+  const [returnedToSelling, setReturnedToSelling] = useState<CustomerRecord | null>(null);
   const [pendingDepositMove, setPendingDepositMove] = useState<{
     record: CustomerRecord;
     queueNumber: string;
@@ -1105,16 +1125,19 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
   }, [connection.status, designer, folderPlaceRevision, mode]);
 
   useEffect(() => {
-    if (mode !== "deposit" || depositView !== "active") {
+    if (mode !== "deposit") {
       setDepositFolderState(null);
       return;
     }
-    const customers = records
-      .filter((record) => record.projectNumber.trim() && record.customerName.trim())
+    const source = isDepositStageView(depositView)
+      ? finishedAll.filter((record) => matchDepositStageOwner(record.owner, designer))
+      : records;
+    const customers = source
       .map((record) => ({
-        queueNumber: record.projectNumber.trim(),
+        queueNumber: depositMoveQueueNumber(record),
         customerName: record.customerName.trim(),
-      }));
+      }))
+      .filter((record) => record.queueNumber && record.customerName);
     if (connection.status !== "Connected" || customers.length === 0) {
       setDepositFolderState(customers.length === 0 ? {} : null);
       return;
@@ -1138,7 +1161,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     return () => {
       cancelled = true;
     };
-  }, [connection.status, depositFolderRevision, depositView, mode, records]);
+  }, [connection.status, depositFolderRevision, depositView, designer, finishedAll, mode, records]);
 
   const loadFinishedDepositStage = useCallback(
     async (background: boolean) => {
@@ -1286,6 +1309,35 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       requestSequenceRef.current += 1;
     };
   }, [depositView, loadFinishedDepositStage, mode]);
+
+  useEffect(() => {
+    const folderId = pendingFolderOpen?.folder.folderId?.trim() ?? "";
+    if (!folderId) {
+      setLatestSketchupFile(null);
+      setSketchupNotice("");
+      return;
+    }
+    let cancelled = false;
+    setSketchupNotice("");
+    void findSketchupFiles(folderId, (file) => {
+      if (!cancelled) {
+        setLatestSketchupFile(file);
+      }
+    })
+      .then((files) => {
+        if (!cancelled) {
+          setLatestSketchupFile(files[0] ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLatestSketchupFile((current) => current);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingFolderOpen]);
 
   useEffect(() => {
     if (mode === "deposit" && isDepositStageView(depositView)) {
@@ -1453,6 +1505,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     return countDistinctCustomersWithAlert(mode, designer, owned, messagingNotifications);
   }, [designer, freezeAll, messagingNotifications, mode, reminderRevision]);
 
+  const freezeActiveAgain = useMemo(() => {
+    return freezeReturnProjects.flatMap((projectNumber) => {
+      const record = freezeAll.find(
+        (item) => item.projectNumber === projectNumber && matchDepositStageOwner(item.owner, designer),
+      );
+      return record ? [record] : [];
+    });
+  }, [designer, freezeAll, freezeReturnProjects]);
+
   useEffect(() => {
     if (mode !== "selling" || !freezeReady || !messagingReady) {
       return;
@@ -1480,6 +1541,15 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     if (messaging.length === 0) {
       return;
     }
+    setFreezeReturnProjects((current) => {
+      const next = [...current];
+      for (const record of messaging) {
+        if (!next.includes(record.projectNumber)) {
+          next.push(record.projectNumber);
+        }
+      }
+      return next;
+    });
     setPendingReturnToSelling((current) => current ?? messaging[0]);
   }, [freezeAll, freezeReady, messagingNotifications, messagingReady, mode]);
 
@@ -1860,6 +1930,30 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     }
   }
 
+  async function openLatestSketchupFile() {
+    const folder = pendingFolderOpen?.folder;
+    const file = latestSketchupFile;
+    if (!folder?.folderId || !file || sketchupNotice === "Opening SketchUp…") {
+      return;
+    }
+    setSketchupNotice("Opening SketchUp…");
+    try {
+      if (!(await sketchupHelperIsRunning())) {
+        setSketchupNotice("The SketchUp helper is not running on this computer.");
+        return;
+      }
+      await openSketchupWithHelper(file);
+      setSketchupNotice("");
+      setPendingFolderOpen(null);
+    } catch (error) {
+      if (error instanceof SketchupHelperOfflineError) {
+        setSketchupNotice("The SketchUp helper is not running on this computer.");
+        return;
+      }
+      setSketchupNotice(error instanceof Error ? error.message : "Could not open the SketchUp file.");
+    }
+  }
+
   async function confirmOpenFolder() {
     if (!pendingFolderOpen) {
       return;
@@ -2123,7 +2217,6 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       depositingProjectsRef.current.has(record.projectNumber) ||
       freezingProjectsRef.current.has(record.projectNumber) ||
       (mode === "selling" && sellingView !== "active") ||
-      (mode === "deposit" && depositView !== "active") ||
       (mode !== "selling" && mode !== "deposit")
     ) {
       return;
@@ -2276,6 +2369,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     };
     returningProjectsRef.current.add(projectKey);
     setActionError("");
+    setFreezeReturnProjects((current) => current.filter((item) => item !== record.projectNumber));
+    setReturnedToSelling(record);
+    setActionMessage(`${record.projectNumber} ${record.customerName} is back on Selling.`);
     setFreezeAll((current) =>
       current.filter(
         (item) => item.projectNumber !== record.projectNumber || !matchDepositStageOwner(item.owner, ownerName),
@@ -2332,6 +2428,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         });
         return next;
       });
+      setReturnedToSelling(null);
+      setActionMessage("");
       setActionError(`Could not move this customer back to Selling: ${getErrorMessage(error)}`);
     } finally {
       returningProjectsRef.current.delete(projectKey);
@@ -2356,6 +2454,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
       if (count >= 5) {
         clearSellingTapTimer(record.id);
         sellingTapRef.current.delete(record.id);
+        setFreezeReturnProjects((current) =>
+          current.includes(record.projectNumber) ? current : [...current, record.projectNumber],
+        );
         setPendingReturnToSelling(record);
       }
       return;
@@ -2390,7 +2491,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     const count = previous && now - previous.at < 800 ? previous.count + 1 : 1;
     if (count >= 7) {
       sellingTapRef.current.delete(record.id);
-      const queueNumber = record.projectNumber.trim().match(/\d{4,}/u)?.[0] ?? "";
+      const queueNumber = depositMoveQueueNumber(record);
       if (queueNumber) {
         setPendingDepositMove({ record, queueNumber });
       } else {
@@ -2612,16 +2713,20 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     );
   }
 
-  function depositFolderStatus(projectNumber: string) {
-    if (mode !== "deposit" || depositView !== "active" || !depositFolderState) {
+  function depositFolderStatus(record: CustomerRecord) {
+    if (mode !== "deposit" || !depositFolderState) {
       return null;
     }
-    return depositFolderState[projectNumber.trim()] ?? null;
+    const queueNumber = depositMoveQueueNumber(record);
+    if (!queueNumber) {
+      return "missing";
+    }
+    return depositFolderState[queueNumber] ?? "missing";
   }
 
-  function folderInCorrectPlace(customerName: string, projectNumber: string) {
+  function folderInCorrectPlace(customerName: string, projectNumber: string, record?: CustomerRecord) {
     if (mode === "deposit") {
-      const status = depositFolderStatus(projectNumber);
+      const status = record ? depositFolderStatus(record) : null;
       if (!status) {
         return true;
       }
@@ -2641,14 +2746,14 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
     icon: "folder" | "sheet" | "presentation",
   ) {
     const isBusy = busyActionKey === `${record.id}:${action}`;
-    const missingFolder = icon === "folder" && !folderInCorrectPlace(record.customerName, record.projectNumber);
+    const missingFolder = icon === "folder" && !folderInCorrectPlace(record.customerName, record.projectNumber, record);
     const Icon = icon === "folder" ? FolderOpen : icon === "presentation" ? Presentation : Sheet;
-    const depositStatus = depositFolderStatus(record.projectNumber);
+    const depositStatus = depositFolderStatus(record);
     const placeName = mode === "deposit"
       ? depositStatus === "missing"
         ? "Deposit folder is not created yet"
         : "No files have been moved into this deposit folder"
-      : `No folder in ${sellingView === "freeze" ? "Freeze" : "Still Active"}`;
+      : `No folder in ${sellingView === "freeze" ? "Freeze" : "Selling Stage or Still Active"}`;
     return (
       <button
         className={`customer-action customer-action--${action}${missingFolder ? " customer-action--missing" : ""}${isBusy ? " customer-action--busy" : ""}`}
@@ -2783,6 +2888,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   onClick={() => setSellingView("freeze")}
                 >
                   Freeze
+                  {freezeActiveAgain.length > 0 ? (
+                    <span className="customer-return-tab-count">{formatNotiCount(freezeActiveAgain.length)}</span>
+                  ) : null}
                   {tabNotiBadge(freezeAlertCount)}
                 </button>
               </div>
@@ -2808,6 +2916,16 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
         {loadWarning ? <div className="customer-notice customer-notice--warning">{loadWarning}</div> : null}
         {mode === "selling" && sellingView === "freeze" && freezeWarning ? (
           <div className="customer-notice customer-notice--warning">{freezeWarning}</div>
+        ) : null}
+        {mode === "selling" && freezeActiveAgain.length > 0 ? (
+          <div className="customer-notice customer-notice--success" role="status">
+            <span className="customer-return-notice__label">Active again on Freeze</span>
+            {freezeActiveAgain.map((record) => (
+              <span key={record.projectNumber} className="customer-return-notice__name">
+                {record.projectNumber} {record.customerName}
+              </span>
+            ))}
+          </div>
         ) : null}
         {actionMessage ? <div className="customer-notice customer-notice--success">{actionMessage}</div> : null}
         {actionError ? <div className="customer-notice customer-notice--error">{actionError}</div> : null}
@@ -2919,7 +3037,20 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                   const hasUnread = unreadForRow.length > 0;
                   const hasAlert = hasUnread || hasRemind;
                   const latestPreview = unreadForRow[0]?.preview;
-                  const rowClass = hasAlert ? "customer-row--unread" : undefined;
+                  const markedReturn =
+                    mode === "selling" &&
+                    sellingView === "freeze" &&
+                    freezeReturnProjects.includes(record.projectNumber);
+                  const markedBack =
+                    mode === "selling" &&
+                    sellingView === "active" &&
+                    returnedToSelling?.projectNumber === record.projectNumber;
+                  const rowClass = [
+                    hasAlert ? "customer-row--unread" : "",
+                    markedReturn || markedBack ? "customer-row--returning" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined;
                   const missingContact = !record.customerUrl.trim();
                   const nameUnlinkedClass = missingContact ? " customer-name--unlinked" : "";
                   const depositQueue = mode === "selling" && sellingView === "active" ? depositQueueFor(record) : "";
@@ -2939,7 +3070,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             onSellingProjectClick(record);
                             return;
                           }
-                          if (mode === "deposit" && depositView === "active") {
+                          if (mode === "deposit") {
                             onDepositProjectClick(record);
                           }
                           if (event.detail === 3) {
@@ -2953,8 +3084,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                               ? `Tap 5 times to Freeze. Tap 7 times to confirm a move to deposit ${depositQueue}`
                               : mode === "selling"
                                 ? "Tap 5 times to move this customer to Freeze"
-                                : mode === "deposit" && depositView === "active"
-                                  ? "Tap 7 times to move Still Active files into this deposit folder"
+                                : mode === "deposit"
+                                  ? "Tap 7 times to move Still Active or Freeze files into this deposit folder"
                                   : "Triple-click to show or hide the reminder"
                         }
                       >
@@ -3002,6 +3133,8 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
                             </span>
                           ) : null}
                           <span className="customer-name__text">{record.customerName}</span>
+                          {markedReturn ? <span className="customer-return-mark">New message</span> : null}
+                          {markedBack ? <span className="customer-return-mark">Back on Selling</span> : null}
                           {record.customerUrl.trim() ? <ExternalLink size={13} /> : null}
                         </button>
                       </div>
@@ -3104,7 +3237,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
             </p>
             <p className="qc-action-dialog__message">
               {mode === "selling"
-                ? `No folder in Still Active for ${SELLING_DESIGNER_FOLDER_NAMES[designer]}.`
+                ? `No folder in Selling Stage or Still Active for ${SELLING_DESIGNER_FOLDER_NAMES[designer]}.`
                 : "No folder in Still Active or Freeze. Nothing was moved."}
             </p>
             <div className="qc-action-dialog__actions">
@@ -3151,7 +3284,7 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               {pendingDepositMove.record.projectNumber} · {pendingDepositMove.record.customerName}
             </p>
             <p>
-              This moves the Still Active folder onto the deposited drive, then copies it into queue folder{" "}
+              This moves the Still Active or Freeze folder onto the deposited drive, then copies it into queue folder{" "}
               {pendingDepositMove.queueNumber}.
             </p>
             <div className="qc-action-dialog__actions">
@@ -3202,7 +3335,9 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
               <button
                 className="search-form__button search-form__button--secondary"
                 type="button"
-                onClick={() => setPendingReturnToSelling(null)}
+                onClick={() => {
+                  setPendingReturnToSelling(null);
+                }}
               >
                 Keep in Freeze
               </button>
@@ -3216,7 +3351,22 @@ export function CustomerWorkspacePage({ mode }: { mode: CustomerMode }) {
           <div className="finder-loading-dialog qc-action-dialog">
             <p className="panel__label">Folder</p>
             <h3 className="panel__title">Project {pendingFolderOpen.record.projectNumber}</h3>
-            <p className="qc-action-dialog__folder">{pendingFolderOpen.folder.folderName}</p>
+            <p className="qc-action-dialog__folder qc-action-dialog__folder--row">
+              <span>{pendingFolderOpen.folder.folderName}</span>
+              {latestSketchupFile ? (
+                <button
+                  className="qc-action-dialog__sketchup"
+                  type="button"
+                  title={latestSketchupFile.fileName}
+                  aria-label={`Open ${latestSketchupFile.fileName}`}
+                  disabled={sketchupNotice === "Opening SketchUp…"}
+                  onClick={() => void openLatestSketchupFile()}
+                >
+                  <Box size={16} />
+                </button>
+              ) : null}
+            </p>
+            {sketchupNotice ? <p className="qc-action-dialog__message">{sketchupNotice}</p> : null}
             <div className="qc-action-dialog__actions">
               <button
                 className="search-form__button"

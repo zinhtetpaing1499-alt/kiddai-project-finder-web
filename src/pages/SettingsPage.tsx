@@ -1,4 +1,4 @@
-import { CheckCircle2, Cloud, FolderSearch, Sheet } from "lucide-react";
+import { Box, CheckCircle2, Cloud, FolderSearch, Sheet } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -67,6 +67,11 @@ export function SettingsPage() {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorText, setErrorText] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
+  const [installCopied, setInstallCopied] = useState(false);
+  const [windowsInstallCopied, setWindowsInstallCopied] = useState(false);
+  const macInstallScript = `curl -fsSL "${window.location.origin}/sketchup-helper/Install-Kiddai-SketchUp-Helper.command" -o /tmp/kiddai-sketchup-install.command && bash /tmp/kiddai-sketchup-install.command`;
+  const windowsInstallScript = `curl.exe -fsSL -o \$env:TEMP\\k.ps1 ${window.location.origin}/sketchup-helper/Install-Kiddai-SketchUp-Helper.ps1
+Unblock-File \$env:TEMP\\k.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File \$env:TEMP\\k.ps1`;
   const sheetSaveTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -368,6 +373,65 @@ export function SettingsPage() {
               placeholder="https://docs.google.com/spreadsheets/..."
               aria-label="Workflow Google Sheet URL"
             />
+          </div>
+        </section>
+
+        <section className="settings-section settings-section--compact settings-section--full">
+          <div className="settings-section__header">
+            <div className="settings-section__icon">
+              <Box size={16} strokeWidth={2} />
+            </div>
+            <div>
+              <p className="panel__label">SketchUp</p>
+              <h3 className="panel__title settings-title">Install helper</h3>
+            </div>
+          </div>
+          <p className="settings-muted">
+            Install once on each computer. A save updates the same Drive file, so the rest of the company sees it in Drive.
+          </p>
+          <p className="settings-muted">Mac, one time</p>
+          <ol className="settings-steps">
+            <li>Open Terminal.</li>
+            <li>Copy the script.</li>
+            <li>Paste it and press Return.</li>
+            <li>A message says the helper is installed. It stays on this computer and starts when the computer starts.</li>
+          </ol>
+          <pre className="settings-install-script">{macInstallScript}</pre>
+          <div className="settings-section__actions">
+            <button
+              className="search-form__button settings-button"
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(macInstallScript).then(() => {
+                  setInstallCopied(true);
+                  window.setTimeout(() => setInstallCopied(false), 2000);
+                });
+              }}
+            >
+              {installCopied ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <p className="settings-muted">Windows, one time</p>
+          <ol className="settings-steps">
+            <li>Press the Windows key, type PowerShell, and open Windows PowerShell. The prompt starts with PS.</li>
+            <li>If a long line is stuck, press Ctrl+C.</li>
+            <li>Paste the first line and press Enter. Wait until a new PS line appears.</li>
+            <li>Paste the second line and press Enter. A message says the helper is installed. It stays on this computer and starts when the computer starts.</li>
+          </ol>
+          <pre className="settings-install-script">{windowsInstallScript}</pre>
+          <div className="settings-section__actions">
+            <button
+              className="search-form__button settings-button"
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(windowsInstallScript).then(() => {
+                  setWindowsInstallCopied(true);
+                  window.setTimeout(() => setWindowsInstallCopied(false), 2000);
+                });
+              }}
+            >
+              {windowsInstallCopied ? "Copied" : "Copy"}
+            </button>
           </div>
         </section>
 

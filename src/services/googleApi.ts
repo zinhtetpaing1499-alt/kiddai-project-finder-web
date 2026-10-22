@@ -43,6 +43,7 @@ type DriveFile = {
   driveId?: string;
   parents?: string[];
   webViewLink?: string;
+  modifiedTime?: string;
 };
 
 type DriveListResponse = {
@@ -395,7 +396,7 @@ async function listDriveFoldersOnce(
       corpora,
       includeItemsFromAllDrives: "true",
       supportsAllDrives: "true",
-      fields: "nextPageToken,files(id,name,mimeType,driveId,parents,webViewLink)",
+      fields: "nextPageToken,files(id,name,mimeType,modifiedTime,driveId,parents,webViewLink)",
       pageSize: "100",
     });
 
@@ -1059,12 +1060,36 @@ export async function moveSellingCustomerFolder(
   };
 }
 
+async function listSellingStageFolderOptions(kiddai2FolderId: string) {
+  const root = await resolveDriveFolder(kiddai2FolderId);
+  const stage = await findChildFolderFlexible(root.folderId, "Selling Stage", root.driveId);
+  if (!stage?.id) {
+    return [];
+  }
+  const children = await listChildFolders(stage.id, root.driveId);
+  const stageName = stage.name ?? "Selling Stage";
+  return sellingFolderOptions(children, `Kiddai2/${stageName}`, stageName);
+}
+
 export async function findSellingCustomerFolders(
   kiddai2FolderId: string,
   designerFolderName: string,
   customerName: string,
   projectNumber = "",
 ): Promise<SellingCustomerFolderOption[]> {
+  try {
+    const stageMatches = matchSellingCustomerFolders(
+      await listSellingStageFolderOptions(kiddai2FolderId),
+      customerName,
+      projectNumber,
+    );
+    if (stageMatches.length > 0) {
+      return stageMatches;
+    }
+  } catch {
+    // The designer folders below remain the backup when Selling Stage cannot be read.
+  }
+
   const route = await resolveSellingDesignerRoute(kiddai2FolderId, designerFolderName);
   const pathPrefix = `Kiddai2/ลูกค้ารอเขียนแบบ/${designerFolderName}`;
   const stillActiveChildren = await listChildFolders(route.stillActiveFolderId, route.driveId);
@@ -1367,8 +1392,14 @@ export async function listSellingCustomerFolderNames(
   ]);
   const names = (folders: DriveFile[]) =>
     folders.map((folder) => folder.name?.trim() ?? "").filter((name) => name.length > 0);
+  let stageNames: string[] = [];
+  try {
+    stageNames = (await listSellingStageFolderOptions(kiddai2FolderId)).map((folder) => folder.folderName);
+  } catch {
+    stageNames = [];
+  }
   return {
-    active: names([...activeChildren, ...activeShortcuts]),
+    active: [...names([...activeChildren, ...activeShortcuts]), ...stageNames],
     freeze: names([...freezeChildren, ...freezeShortcuts]),
   };
 }
@@ -2065,6 +2096,118 @@ export function spreadsheetEditUrl(fileId: string, fallbackUrl = "") {
     return `https://docs.google.com/spreadsheets/d/${id}/edit`;
   }
   return fallbackUrl.trim();
+}
+
+export type SketchupDriveFile = {
+  fileId: string;
+  fileName: string;
+  modifiedTime: string;
+};
+
+async function listSketchupFolderChildren(parentId: string) {
+  const params = new URLSearchParams({
+    q: `'${escapeDriveQuery(parentId)}' in parents and trashed = false`,
+    corpora: "allDrives",
+    includeItemsFromAllDrives: "true",
+    supportsAllDrives: "true",
+    fields: "nextPageToken,files(id,name,mimeType,modifiedTime)",
+    pageSize: "200",
+  });
+  const files: DriveFile[] = [];
+  let pageToken: string | undefined;
+  do {
+    if (pageToken) {
+      params.set("pageToken", pageToken);
+    }
+    const payload = await googleFetch<DriveListResponse>(
+      `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+    );
+    files.push(...(payload.files ?? []));
+    pageToken = payload.nextPageToken;
+  } while (pageToken);
+  return files;
+}
+
+export async function findSketchupFiles(
+  folderId: string,
+  onFound?: (file: SketchupDriveFile) => void,
+) {
+  let best: SketchupDriveFile | null = null;
+  const seen = new Set<string>();
+
+  function consider(file: SketchupDriveFile) {
+    if (best && file.modifiedTime.localeCompare(best.modifiedTime) <= 0) {
+      return;
+    }
+    best = file;
+    onFound?.(file);
+  }
+
+  async function walk(parentId: string, depth: number) {
+    if (depth > 3 || seen.size > 400) {
+      return;
+    }
+    const children = await listSketchupFolderChildren(parentId);
+    const folders: string[] = [];
+    for (const child of children) {
+      const childId = child.id?.trim() ?? "";
+      const childName = child.name?.trim() ?? "";
+      if (!childId || !childName || seen.has(childId)) {
+        continue;
+      }
+      seen.add(childId);
+      if (child.mimeType === "application/vnd.google-apps.folder") {
+        folders.push(childId);
+        continue;
+      }
+      if (childName.toLocaleLowerCase().endsWith(".skp") && !childName.includes("~")) {
+        consider({
+          fileId: childId,
+          fileName: childName,
+          modifiedTime: child.modifiedTime ?? "",
+        });
+      }
+    }
+    await Promise.all(folders.map((childId) => walk(childId, depth + 1)));
+  }
+
+  await walk(folderId.trim(), 0);
+  return best ? [best] : [];
+}
+
+export async function downloadSketchupFile(file: SketchupDriveFile) {
+  const accessToken = await getValidAccessToken();
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.fileId)}?alt=media&supportsAllDrives=true`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) {
+    const refreshed = await getValidAccessToken(true);
+    const retry = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.fileId)}?alt=media&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${refreshed}` } },
+    );
+    if (!retry.ok) {
+      throw new Error("Could not download this SketchUp file.");
+    }
+    saveSketchupDownload(file.fileName, await retry.blob());
+    return;
+  }
+  if (!response.ok) {
+    throw new Error("Could not download this SketchUp file.");
+  }
+  saveSketchupDownload(file.fileName, await response.blob());
+}
+
+function saveSketchupDownload(fileName: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function openDriveFolder(folderId: string) {
